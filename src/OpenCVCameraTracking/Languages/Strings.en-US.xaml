@@ -69,11 +69,17 @@
     <sys:String x:Key="NoDefaultStream">None</sys:String>
     <sys:String x:Key="Save">Save</sys:String>
     <sys:String x:Key="Cancel">Cancel</sys:String>
+    <sys:String x:Key="Confirm">Confirm</sys:String>
+    <sys:String x:Key="RegionName">Name</sys:String>
+    <sys:String x:Key="SamplePreview">Sample preview</sys:String>
     <sys:String x:Key="ProfileRequired">Enter a source name and complete address.</sys:String>
     <sys:String x:Key="InvalidStreamAddress">The address must start with rtsp://, http:// or https://.</sys:String>
     <sys:String x:Key="Information">Information</sys:String>
     <sys:String x:Key="RecognitionWhitelist">Recognition &amp; whitelist</sys:String>
     <sys:String x:Key="ManageWhitelist">Enroll / manage whitelist</sys:String>
+    <sys:String x:Key="SelectRegionEnroll">Select region</sys:String>
+    <sys:String x:Key="SelectRegionHint">Drag a rectangle over a face or cat in the preview, then release to enroll the selected region.</sys:String>
+    <sys:String x:Key="SelectionTooSmall">The selected region is too small. Please select a larger area.</sys:String>
     <sys:String x:Key="WhitelistSummary">Whitelist: {0} identities</sys:String>
     <sys:String x:Key="RecognitionLog">Recent recognition events</sys:String>
     <sys:String x:Key="NoRecognitionEvents">No recognition events yet</sys:String>

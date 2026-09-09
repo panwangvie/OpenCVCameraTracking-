@@ -3,9 +3,11 @@ using System.IO;
 using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
+using CvRect = OpenCvSharp.Rect;
 using OpenCVCameraTracking.Core;
 using OpenCVCameraTracking.Core.Camera;
 using OpenCVCameraTracking.Core.Detection;
@@ -29,6 +31,8 @@ public partial class MainWindow : Window
     private int _renderPending;
     private bool _isClosing;
     private bool _applyingSettings;
+    private int _latestFrameWidth;
+    private int _latestFrameHeight;
 
     public MainWindow()
     {
@@ -210,6 +214,9 @@ public partial class MainWindow : Window
                     PreviewImage.Source = _previewBitmap;
                     PreviewPlaceholder.Visibility = Visibility.Collapsed;
                 }
+
+                _latestFrameWidth = e.Width;
+                _latestFrameHeight = e.Height;
 
                 _previewBitmap.WritePixels(
                     new Int32Rect(0, 0, e.Width, e.Height),
@@ -410,12 +417,33 @@ public partial class MainWindow : Window
         var window = new WhitelistWindow(
             _whitelistRecognition,
             (name, kind) => _engine?.EnrollCurrentTarget(name, kind)
+                ?? new WhitelistEnrollmentResult(WhitelistEnrollmentStatus.NoFrame),
+            SelectRegionFromCurrentFrame,
+            (region, name, kind) => _engine?.EnrollCurrentRegion(region, name, kind)
                 ?? new WhitelistEnrollmentResult(WhitelistEnrollmentStatus.NoFrame))
         {
             Owner = this
         };
         window.ShowDialog();
         UpdateWhitelistSummary();
+    }
+
+    private RegionSelectionResult? SelectRegionFromCurrentFrame()
+    {
+        if (_previewBitmap is null || _latestFrameWidth <= 0 || _latestFrameHeight <= 0)
+        {
+            MessageBox.Show(this, LocalizationManager.Get("WhitelistNoFrame"),
+                LocalizationManager.Get("Information"), MessageBoxButton.OK, MessageBoxImage.Information);
+            return null;
+        }
+
+        var window = new RegionSelectionWindow(_previewBitmap, _latestFrameWidth, _latestFrameHeight)
+        {
+            Owner = this
+        };
+        return window.ShowDialog() == true && window.SelectedRegion is { } region
+            ? new RegionSelectionResult(region, window.SelectedName)
+            : null;
     }
 
     private void HandleRecognitionEvents(IReadOnlyList<TrackedObject> objects)

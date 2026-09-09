@@ -59,9 +59,29 @@ public sealed class WhitelistRecognitionService : IDisposable
             ThrowIfDisposed();
             return _profiles
                 .Select(ToPublicProfile)
-                .OrderBy(profile => profile.Kind)
+                .OrderByDescending(profile => profile.CreatedAt)
                 .ThenBy(profile => profile.Name, StringComparer.CurrentCultureIgnoreCase)
                 .ToArray();
+        }
+    }
+
+    public IReadOnlyList<string> GetSamplePaths(string profileId)
+    {
+        lock (_gate)
+        {
+            ThrowIfDisposed();
+            var profile = _profiles.FirstOrDefault(item => item.Id == profileId);
+            if (profile is null)
+            {
+                return [];
+            }
+
+            var directory = GetProfileDirectory(profile.Id);
+            return Directory.Exists(directory)
+                ? Directory.EnumerateFiles(directory, "*.png")
+                    .OrderByDescending(path => path, StringComparer.OrdinalIgnoreCase)
+                    .ToArray()
+                : [];
         }
     }
 
@@ -129,6 +149,13 @@ public sealed class WhitelistRecognitionService : IDisposable
         TrackedObject target,
         string name,
         WhitelistSubjectKind kind)
+        => Enroll(bgrFrame, target.Box, name, kind);
+
+    public WhitelistEnrollmentResult Enroll(
+        Mat bgrFrame,
+        Rect region,
+        string name,
+        WhitelistSubjectKind kind)
     {
         var normalizedName = name.Trim();
         if (string.IsNullOrWhiteSpace(normalizedName))
@@ -139,7 +166,7 @@ public sealed class WhitelistRecognitionService : IDisposable
         lock (_gate)
         {
             ThrowIfDisposed();
-            using var sample = PrepareSample(bgrFrame, target.Box, kind);
+            using var sample = PrepareSample(bgrFrame, region, kind);
             if (sample is null)
             {
                 return new WhitelistEnrollmentResult(WhitelistEnrollmentStatus.NoMatchingTarget);

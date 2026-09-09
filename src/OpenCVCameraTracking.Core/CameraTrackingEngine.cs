@@ -146,6 +146,34 @@ public sealed class CameraTrackingEngine : IAsyncDisposable
         }
     }
 
+    public WhitelistEnrollmentResult EnrollCurrentRegion(
+        Rect region,
+        string name,
+        WhitelistSubjectKind kind)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (_whitelistRecognition is null)
+        {
+            return new WhitelistEnrollmentResult(WhitelistEnrollmentStatus.RecognitionUnavailable);
+        }
+
+        Mat? frame;
+        lock (_latestSnapshotGate)
+        {
+            if (_latestFrame is null)
+            {
+                return new WhitelistEnrollmentResult(WhitelistEnrollmentStatus.NoFrame);
+            }
+
+            frame = _latestFrame.Clone();
+        }
+
+        using (frame)
+        {
+            return _whitelistRecognition.Enroll(frame, region, name, kind);
+        }
+    }
+
     private void CaptureLoop(CameraSourceOptions options, CancellationToken cancellationToken)
     {
         try

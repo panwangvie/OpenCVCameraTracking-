@@ -69,11 +69,17 @@
     <sys:String x:Key="NoDefaultStream">不指定</sys:String>
     <sys:String x:Key="Save">保存</sys:String>
     <sys:String x:Key="Cancel">取消</sys:String>
+    <sys:String x:Key="Confirm">确定</sys:String>
+    <sys:String x:Key="RegionName">名称</sys:String>
+    <sys:String x:Key="SamplePreview">样本预览</sys:String>
     <sys:String x:Key="ProfileRequired">请填写视频源名称和完整地址。</sys:String>
     <sys:String x:Key="InvalidStreamAddress">网络地址必须以 rtsp://、http:// 或 https:// 开头。</sys:String>
     <sys:String x:Key="Information">提示</sys:String>
     <sys:String x:Key="RecognitionWhitelist">识别与白名单</sys:String>
     <sys:String x:Key="ManageWhitelist">录入 / 管理白名单</sys:String>
+    <sys:String x:Key="SelectRegionEnroll">圈选录入</sys:String>
+    <sys:String x:Key="SelectRegionHint">点击后在右侧画面拖拽圈选人脸或猫，松开鼠标完成选择。</sys:String>
+    <sys:String x:Key="SelectionTooSmall">圈选区域太小，请重新选择一个更大的区域。</sys:String>
     <sys:String x:Key="WhitelistSummary">白名单：{0} 个身份</sys:String>
     <sys:String x:Key="RecognitionLog">最近识别记录</sys:String>
     <sys:String x:Key="NoRecognitionEvents">暂无识别记录</sys:String>
