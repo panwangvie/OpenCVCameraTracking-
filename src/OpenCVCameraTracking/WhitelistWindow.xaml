@@ -1,0 +1,81 @@
+<Window x:Class="OpenCVCameraTracking.WhitelistWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="{DynamicResource WhitelistTitle}" Height="560" Width="680"
+        MinHeight="500" MinWidth="600"
+        Background="#101418" Foreground="#EAF0F4"
+        Icon="Assets/AppIcon.ico"
+        WindowStartupLocation="CenterOwner" ResizeMode="CanResizeWithGrip">
+    <Grid Margin="18">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <Border Padding="16" CornerRadius="9" Background="#192127"
+                BorderBrush="#2A3942" BorderThickness="1">
+            <StackPanel>
+                <TextBlock Text="{DynamicResource EnrollCurrentTarget}" FontSize="19"
+                           FontWeight="SemiBold" Margin="0,0,0,10" />
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="150" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Margin="0,0,10,0">
+                        <TextBlock Text="{DynamicResource WhitelistType}" />
+                        <ComboBox x:Name="KindBox">
+                            <ComboBoxItem Content="{DynamicResource WhitelistFace}" Tag="Face" IsSelected="True" />
+                            <ComboBoxItem Content="{DynamicResource WhitelistCat}" Tag="Cat" />
+                        </ComboBox>
+                    </StackPanel>
+                    <StackPanel Grid.Column="1">
+                        <TextBlock Text="{DynamicResource WhitelistName}" />
+                        <TextBox x:Name="NameBox" MaxLength="50" />
+                    </StackPanel>
+                </Grid>
+                <Button Content="{DynamicResource CaptureEnroll}" Click="EnrollButton_OnClick"
+                        HorizontalAlignment="Left" Background="#087F5B" BorderBrush="#18A979" />
+                <TextBlock Text="{DynamicResource WhitelistEnrollHint}" Foreground="#91A4AF"
+                           TextWrapping="Wrap" Margin="4,8,4,0" />
+            </StackPanel>
+        </Border>
+
+        <TextBlock Grid.Row="1" Text="{DynamicResource WhitelistMembers}" FontSize="19"
+                   FontWeight="SemiBold" Margin="0,16,0,8" />
+
+        <ListBox x:Name="ProfileList" Grid.Row="2">
+            <ListBox.ItemTemplate>
+                <DataTemplate>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel>
+                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
+                            <TextBlock Text="{Binding TypeText}" Foreground="#91A4AF" FontSize="12" />
+                        </StackPanel>
+                        <TextBlock Grid.Column="1" Text="{Binding SampleText}" Foreground="#72D6B5"
+                                   VerticalAlignment="Center" Margin="12,0,4,0" />
+                    </Grid>
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
+
+        <Grid Grid.Row="3" Margin="0,12,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <Button Content="{DynamicResource DeleteSelected}" Click="DeleteButton_OnClick"
+                    Background="#6C2D35" BorderBrush="#A74652" />
+            <TextBlock x:Name="StoragePathText" Grid.Column="1" Foreground="#70838E"
+                       TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="10,0" />
+            <Button Grid.Column="2" Content="{DynamicResource Close}" Click="CloseButton_OnClick" />
+        </Grid>
+    </Grid>
+</Window>

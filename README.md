@@ -14,10 +14,14 @@
 - 支持自定义 YOLOv5/YOLOv8 ONNX 模型。
 - "人 + 动物"复合检测：YuNet 人脸与动物检测并发运行，两类目标同时显示并独立跟踪。
 - IoU 多目标关联、位置平滑和短时丢失保留，画面中显示稳定目标编号。
+- 本地人脸/猫白名单：从当前画面录入样本，使用 OpenCV LBPH 进行轻量级身份匹配。
+- 已知目标与陌生目标事件记录；陌生人或未录入的猫出现时显示红色提示。
 - 设置窗口可管理多个网络视频流并记住默认选择。
 - 保存来源类型、检测模式、模型、检测阈值、语言和上次输入的网络地址。
 - 简体中文与 English 运行时切换。
 - 自定义深色 ComboBox、ComboBoxItem、按钮、输入框和列表样式。
+- 自定义窄型深色滚动条和青绿色 Slider 样式，适配 WPF 深色主题。
+- 内置摄像头识别主题图标，支持 PNG 预览和多尺寸 Windows ICO。
 
 ## 运行
 
@@ -42,6 +46,30 @@ dotnet run --project src/OpenCVCameraTracking/OpenCVCameraTracking.csproj
 设置窗口可调整人脸置信度。数值降低会更灵敏，但误检可能增加；默认值为 `0.55`。
 
 “人脸（Haar，兼容）”仍可选择，主要用于不希望执行 ONNX DNN 的兼容场景。
+
+## 人脸与猫白名单
+
+1. 先启动摄像头、RTSP 或视频文件，并选择能检测目标的模式。
+2. 点击主窗口中的“录入 / 管理白名单”。
+3. 选择“人脸”或“猫脸”，填写姓名或宠物名称。
+4. 保持目标清晰可见，点击“抓取当前目标并录入”。
+5. 对同一名称从不同角度重复录入 3～5 次，可以提高匹配稳定性。
+
+人脸使用 YuNet/Haar 提供的检测框；猫使用 YOLO 动物检测框的上半部分作为近似脸部/外观区域。身份匹配使用 OpenCV `LBPHFaceRecognizer`，适合本地轻量级白名单，但不等同于高安全等级的人脸认证。光照、角度和遮挡变化较大时应录入更多样本，门禁等高风险场景建议替换为专用的人脸或宠物 ReID 模型。
+
+白名单样本和元数据保存在：
+
+```text
+%LocalAppData%\OpenCVCameraTracking\Whitelist
+```
+
+识别事件以 JSON Lines 格式记录在：
+
+```text
+%LocalAppData%\OpenCVCameraTracking\recognition-events.jsonl
+```
+
+首次检测到一个跟踪目标或其身份状态发生变化时会写入记录。画面中的已知目标使用绿色边框并显示名称；陌生目标使用红色边框和 `unknown` 标签，主窗口顶部同时显示告警横幅。
 
 ## 动物检测
 
@@ -135,6 +163,25 @@ src/OpenCVCameraTracking/Languages/
 
 增加语言时复制任意现有 `Strings.*.xaml`，翻译值并在 `LocalizationManager` 与语言下拉框中注册语言代码。
 
+## 界面主题与应用图标
+
+控件主题位于：
+
+```text
+src/OpenCVCameraTracking/Themes/Controls.xaml
+```
+
+其中自定义了 `ComboBox`、`ComboBoxItem`、`Button`、`TextBox`、`ScrollBar`、`Slider` 和 `ListBox` 样式。滚动条采用 10px 窄轨道和圆角滑块，避免 WPF 默认滚动条在深色界面中出现白色箭头区域；设置窗口的阈值 Slider 使用青绿色进度轨道和圆形拖动点。
+
+应用图标文件位于：
+
+```text
+src/OpenCVCameraTracking/Assets/AppIcon.png
+src/OpenCVCameraTracking/Assets/AppIcon.ico
+```
+
+`AppIcon.ico` 包含 `16、24、32、48、64、128、256px` 多个尺寸，并通过项目文件的 `ApplicationIcon` 配置到 Windows 可执行文件，同时应用到主窗口、设置窗口和白名单窗口。
+
 ## 集成到现有 WPF 项目
 
 引用 `OpenCVCameraTracking.Core`，然后创建检测器和引擎：
@@ -195,6 +242,9 @@ await engine.DisposeAsync();
 - `Detection/YoloOnnxDetector.cs`：自定义 YOLOv5/YOLOv8 模型解析。
 - `Detection/CompositeObjectDetector.cs`：多检测器组合，并发推理并按标签去重。
 - `Tracking/IouMultiObjectTracker.cs`：目标关联、编号和边框平滑。
+- `Recognition/WhitelistRecognitionService.cs`：白名单样本管理、LBPH 训练和身份匹配。
+- `WhitelistWindow.xaml`：人脸/猫白名单录入、追加样本和删除。
+- `Configuration/RecognitionEventStore.cs`：识别事件 JSONL 记录。
 - `Configuration/SettingsStore.cs`：JSON 设置持久化。
 - `SettingsWindow.xaml`：语言、阈值和网络流管理。
 - `Themes/Controls.xaml`：下拉框等控件模板。

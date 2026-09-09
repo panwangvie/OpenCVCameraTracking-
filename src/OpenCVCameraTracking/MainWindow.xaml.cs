@@ -9,6 +9,7 @@ using System.Windows.Threading;
 using OpenCVCameraTracking.Core;
 using OpenCVCameraTracking.Core.Camera;
 using OpenCVCameraTracking.Core.Detection;
+using OpenCVCameraTracking.Core.Recognition;
 using OpenCVCameraTracking.Core.Tracking;
 using OpenCVCameraTracking.Configuration;
 using OpenCVCameraTracking.Localization;
@@ -19,6 +20,10 @@ namespace OpenCVCameraTracking;
 public partial class MainWindow : Window
 {
     private ApplicationSettings _settings;
+    private readonly WhitelistRecognitionService _whitelistRecognition = new();
+    private readonly RecognitionEventStore _recognitionEventStore = new();
+    private readonly Dictionary<int, string> _recognitionStates = [];
+    private readonly DispatcherTimer _unknownAlertTimer;
     private CameraTrackingEngine? _engine;
     private WriteableBitmap? _previewBitmap;
     private int _renderPending;
@@ -28,6 +33,15 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        _unknownAlertTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromSeconds(4)
+        };
+        _unknownAlertTimer.Tick += (_, _) =>
+        {
+            _unknownAlertTimer.Stop();
+            UnknownAlertBanner.Visibility = Visibility.Collapsed;
+        };
         _settings = ((App)Application.Current).Settings;
         ApplySettingsToUi();
         Loaded += async (_, _) => await RefreshDevicesAsync();
@@ -59,7 +73,12 @@ public partial class MainWindow : Window
             PersistUiSelection();
             var detector = CreateDetector();
             var tracker = new IouMultiObjectTracker(minimumIou: 0.18f, maximumMisses: 12, smoothing: 0.72f);
-            _engine = new CameraTrackingEngine(detector, detectionInterval: 1, tracker);
+            _recognitionStates.Clear();
+            _engine = new CameraTrackingEngine(
+                detector,
+                detectionInterval: 1,
+                tracker,
+                _whitelistRecognition);
             _engine.FrameReady += EngineOnFrameReady;
             _engine.StatusChanged += EngineOnStatusChanged;
             _engine.Faulted += EngineOnFaulted;
@@ -198,6 +217,7 @@ public partial class MainWindow : Window
                     e.Stride,
                     0);
                 MetricsText.Text = LocalizationManager.Format("MetricsFormat", e.FramesPerSecond, e.Objects.Count);
+                HandleRecognitionEvents(e.Objects);
             }
             finally
             {
@@ -385,6 +405,89 @@ public partial class MainWindow : Window
         ApplySettingsToUi();
     }
 
+    private void WhitelistButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        var window = new WhitelistWindow(
+            _whitelistRecognition,
+            (name, kind) => _engine?.EnrollCurrentTarget(name, kind)
+                ?? new WhitelistEnrollmentResult(WhitelistEnrollmentStatus.NoFrame))
+        {
+            Owner = this
+        };
+        window.ShowDialog();
+        UpdateWhitelistSummary();
+    }
+
+    private void HandleRecognitionEvents(IReadOnlyList<TrackedObject> objects)
+    {
+        foreach (var item in objects.Where(candidate => candidate.IsKnown.HasValue))
+        {
+            var kind = string.Equals(item.Label, "cat", StringComparison.OrdinalIgnoreCase)
+                ? WhitelistSubjectKind.Cat
+                : WhitelistSubjectKind.Face;
+            var state = item.IsKnown == true
+                ? $"known:{item.IdentityName}"
+                : "unknown";
+            if (_recognitionStates.TryGetValue(item.Id, out var previousState) && previousState == state)
+            {
+                continue;
+            }
+
+            _recognitionStates[item.Id] = state;
+            var typeName = kind == WhitelistSubjectKind.Face
+                ? LocalizationManager.Get("WhitelistFace")
+                : LocalizationManager.Get("WhitelistCat");
+            var description = item.IsKnown == true
+                ? LocalizationManager.Format("KnownRecognition", item.IdentityName ?? string.Empty, typeName)
+                : LocalizationManager.Get(kind == WhitelistSubjectKind.Face
+                    ? "UnknownFaceAlert"
+                    : "UnknownCatAlert");
+
+            try
+            {
+                _recognitionEventStore.Append(new RecognitionEventRecord(
+                    DateTimeOffset.Now,
+                    kind,
+                    item.IdentityName,
+                    item.IsKnown == true,
+                    item.Id,
+                    item.RecognitionDistance));
+            }
+            catch (IOException)
+            {
+                // Recognition must keep running even if the local event log is temporarily unavailable.
+            }
+
+            if (RecognitionLogBox.Items.Count == 1 &&
+                RecognitionLogBox.Items[0] is ListBoxItem placeholder &&
+                !placeholder.IsHitTestVisible)
+            {
+                RecognitionLogBox.Items.Clear();
+            }
+
+            RecognitionLogBox.Items.Insert(
+                0,
+                LocalizationManager.Format("RecognitionEventFormat", DateTimeOffset.Now, description));
+            while (RecognitionLogBox.Items.Count > 30)
+            {
+                RecognitionLogBox.Items.RemoveAt(RecognitionLogBox.Items.Count - 1);
+            }
+
+            if (item.IsKnown != true)
+            {
+                UnknownAlertText.Text = description;
+                UnknownAlertBanner.Visibility = Visibility.Visible;
+                _unknownAlertTimer.Stop();
+                _unknownAlertTimer.Start();
+            }
+        }
+    }
+
+    private void UpdateWhitelistSummary() =>
+        WhitelistSummaryText.Text = LocalizationManager.Format(
+            "WhitelistSummary",
+            _whitelistRecognition.GetProfiles().Count);
+
     private void ApplySettingsToUi()
     {
         _applyingSettings = true;
@@ -403,6 +506,7 @@ public partial class MainWindow : Window
             }
 
             MetricsText.Text = LocalizationManager.Format("MetricsFormat", 0d, 0);
+            UpdateWhitelistSummary();
         }
         finally
         {
@@ -462,6 +566,8 @@ public partial class MainWindow : Window
         PersistUiSelection();
         _engine?.DisposeAsync().AsTask().GetAwaiter().GetResult();
         _engine = null;
+        _unknownAlertTimer.Stop();
+        _whitelistRecognition.Dispose();
         base.OnClosing(e);
     }
 

@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using OpenCVCameraTracking.Core.Camera;
 using OpenCVCameraTracking.Core.Detection;
+using OpenCVCameraTracking.Core.Recognition;
 using OpenCVCameraTracking.Core.Tracking;
 using OpenCvSharp;
 
@@ -28,7 +29,11 @@ public sealed class CameraTrackingEngine : IAsyncDisposable
     private static readonly object FfmpegEnvironmentLock = new();
     private readonly IObjectDetector _detector;
     private readonly IouMultiObjectTracker _tracker;
+    private readonly WhitelistRecognitionService? _whitelistRecognition;
     private readonly int _detectionInterval;
+    private readonly object _latestSnapshotGate = new();
+    private Mat? _latestFrame;
+    private IReadOnlyList<TrackedObject> _latestObjects = [];
     private CancellationTokenSource? _cancellation;
     private Task? _worker;
     private bool _disposed;
@@ -36,18 +41,21 @@ public sealed class CameraTrackingEngine : IAsyncDisposable
     public CameraTrackingEngine(
         IObjectDetector detector,
         int detectionInterval = 2,
-        IouMultiObjectTracker? tracker = null)
+        IouMultiObjectTracker? tracker = null,
+        WhitelistRecognitionService? whitelistRecognition = null)
     {
         _detector = detector;
         _detectionInterval = Math.Max(1, detectionInterval);
         _tracker = tracker ?? new IouMultiObjectTracker();
+        _whitelistRecognition = whitelistRecognition;
     }
 
     public CameraTrackingEngine(
         IEnumerable<IObjectDetector> detectors,
         int detectionInterval = 2,
-        IouMultiObjectTracker? tracker = null)
-        : this(new CompositeObjectDetector(detectors), detectionInterval, tracker)
+        IouMultiObjectTracker? tracker = null,
+        WhitelistRecognitionService? whitelistRecognition = null)
+        : this(new CompositeObjectDetector(detectors), detectionInterval, tracker, whitelistRecognition)
     {
     }
 
@@ -67,6 +75,7 @@ public sealed class CameraTrackingEngine : IAsyncDisposable
 
         Validate(options);
         _tracker.Reset();
+        ClearLatestSnapshot();
         _cancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         _worker = Task.Run(() => CaptureLoop(options, _cancellation.Token), CancellationToken.None);
         return Task.CompletedTask;
@@ -93,7 +102,47 @@ public sealed class CameraTrackingEngine : IAsyncDisposable
             _worker = null;
             _cancellation?.Dispose();
             _cancellation = null;
+            ClearLatestSnapshot();
             StatusChanged?.Invoke(this, "Stopped");
+        }
+    }
+
+    public WhitelistEnrollmentResult EnrollCurrentTarget(
+        string name,
+        WhitelistSubjectKind kind)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (_whitelistRecognition is null)
+        {
+            return new WhitelistEnrollmentResult(WhitelistEnrollmentStatus.RecognitionUnavailable);
+        }
+
+        Mat? frame;
+        IReadOnlyList<TrackedObject> objects;
+        lock (_latestSnapshotGate)
+        {
+            if (_latestFrame is null)
+            {
+                return new WhitelistEnrollmentResult(WhitelistEnrollmentStatus.NoFrame);
+            }
+
+            frame = _latestFrame.Clone();
+            objects = _latestObjects;
+        }
+
+        using (frame)
+        {
+            var expectedLabel = kind == WhitelistSubjectKind.Face ? "face" : "cat";
+            var target = objects
+                .Where(item => string.Equals(item.Label, expectedLabel, StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(item => item.Box.Width * item.Box.Height)
+                .FirstOrDefault();
+            if (target is null)
+            {
+                return new WhitelistEnrollmentResult(WhitelistEnrollmentStatus.NoMatchingTarget);
+            }
+
+            return _whitelistRecognition.Enroll(frame, target, name, kind);
         }
     }
 
@@ -253,10 +302,16 @@ public sealed class CameraTrackingEngine : IAsyncDisposable
     {
         frameNumber++;
         frameCounter++;
-        var objects = frameNumber % _detectionInterval == 0 || _tracker.Current.Count == 0
+        IReadOnlyList<TrackedObject> objects = frameNumber % _detectionInterval == 0 || _tracker.Current.Count == 0
             ? _tracker.Update(_detector.Detect(frame))
             : _tracker.Current;
 
+        if (_whitelistRecognition is not null)
+        {
+            objects = _whitelistRecognition.Recognize(frame, objects);
+        }
+
+        UpdateLatestSnapshot(frame, objects);
         DrawTracks(frame, objects);
         if (fpsTimer.ElapsedMilliseconds >= 1_000)
         {
@@ -353,9 +408,22 @@ public sealed class CameraTrackingEngine : IAsyncDisposable
     {
         foreach (var item in objects)
         {
-            var color = ColorForId(item.Id);
+            var color = item.IsKnown switch
+            {
+                true => new Scalar(70, 200, 90),
+                false => new Scalar(70, 70, 230),
+                _ => ColorForId(item.Id)
+            };
             Cv2.Rectangle(frame, item.Box, color, 2, LineTypes.AntiAlias);
-            var caption = $"{item.Label} #{item.Id}  {item.Confidence:P0}";
+            var identity = item.IsKnown switch
+            {
+                true => item.IdentityName,
+                false => "unknown",
+                _ => null
+            };
+            var caption = string.IsNullOrWhiteSpace(identity)
+                ? $"{item.Label} #{item.Id}  {item.Confidence:P0}"
+                : $"{item.Label} {identity} #{item.Id}  {item.Confidence:P0}";
             var textSize = Cv2.GetTextSize(caption, HersheyFonts.HersheySimplex, 0.55, 1, out var baseline);
             var textTop = Math.Max(0, item.Box.Y - textSize.Height - baseline - 6);
             var background = new Rect(
@@ -396,6 +464,33 @@ public sealed class CameraTrackingEngine : IAsyncDisposable
         FrameReady?.Invoke(
             this,
             new FrameReadyEventArgs(pixels, bgra.Width, bgra.Height, stride, objects, framesPerSecond));
+    }
+
+    private void UpdateLatestSnapshot(Mat frame, IReadOnlyList<TrackedObject> objects)
+    {
+        var copy = frame.Clone();
+        Mat? previous;
+        lock (_latestSnapshotGate)
+        {
+            previous = _latestFrame;
+            _latestFrame = copy;
+            _latestObjects = objects.ToArray();
+        }
+
+        previous?.Dispose();
+    }
+
+    private void ClearLatestSnapshot()
+    {
+        Mat? previous;
+        lock (_latestSnapshotGate)
+        {
+            previous = _latestFrame;
+            _latestFrame = null;
+            _latestObjects = [];
+        }
+
+        previous?.Dispose();
     }
 
     private static void Validate(CameraSourceOptions options)
@@ -498,6 +593,7 @@ public sealed class CameraTrackingEngine : IAsyncDisposable
         }
 
         await StopAsync().ConfigureAwait(false);
+        ClearLatestSnapshot();
         _detector.Dispose();
         _disposed = true;
         GC.SuppressFinalize(this);

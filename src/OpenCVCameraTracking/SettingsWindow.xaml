@@ -3,7 +3,8 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="{DynamicResource SettingsTitle}" Width="940" Height="680"
         MinWidth="820" MinHeight="600" WindowStartupLocation="CenterOwner"
-        Background="#101418" Foreground="#EAF0F4" ResizeMode="CanResizeWithGrip">
+        Background="#101418" Foreground="#EAF0F4" ResizeMode="CanResizeWithGrip"
+        Icon="Assets/AppIcon.ico">
     <Grid Margin="20">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
