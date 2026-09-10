@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="15.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup Condition="'$(VisualStudioVersion)' == '' or '$(VisualStudioVersion)' &lt; '15.0'">
+    <VisualStudioVersion>15.0</VisualStudioVersion>
+  </PropertyGroup>
+
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+
+  <PropertyGroup>
+    <WapProjPath Condition="'$(WapProjPath)' == ''">$(MSBuildExtensionsPath)\Microsoft\DesktopBridge\</WapProjPath>
+  </PropertyGroup>
+  <Import Project="$(WapProjPath)\Microsoft.DesktopBridge.props" />
+
+  <Import Project="StoreIdentity.props" Condition="Exists('StoreIdentity.props')" />
+  <Import Project="StoreIdentity.props.example" Condition="!Exists('StoreIdentity.props')" />
+
+  <PropertyGroup>
+    <ProjectGuid>{3E9AE7B1-5481-4C59-96FD-C02C46C8622A}</ProjectGuid>
+    <TargetPlatformVersion>10.0.22621.0</TargetPlatformVersion>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <DefaultLanguage>zh-CN</DefaultLanguage>
+    <StoreIdentityPath>$(MSBuildProjectDirectory)</StoreIdentityPath>
+    <UseLocalPackageSigning Condition="'$(UseLocalPackageSigning)' == ''">false</UseLocalPackageSigning>
+    <AppxPackageSigningEnabled>false</AppxPackageSigningEnabled>
+    <AppxPackageSigningEnabled Condition="'$(UseLocalPackageSigning)' == 'true'">true</AppxPackageSigningEnabled>
+    <PackageCertificateKeyFile Condition="'$(UseLocalPackageSigning)' == 'true'">$(StoreIdentityPath)\$(LocalSigningCertificatePath)</PackageCertificateKeyFile>
+    <PackageCertificatePassword Condition="'$(UseLocalPackageSigning)' == 'true'">$(LocalSigningCertificatePassword)</PackageCertificatePassword>
+    <GenerateAppxPackageOnBuild>false</GenerateAppxPackageOnBuild>
+    <EntryPointProjectUniqueName>..\OpenCVCameraTracking\OpenCVCameraTracking.csproj</EntryPointProjectUniqueName>
+    <NoWarn>$(NoWarn);NU1702</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <AppxManifest Include="$(IntermediateOutputPath)Package.appxmanifest">
+      <SubType>Designer</SubType>
+    </AppxManifest>
+    <None Include="Package.appxmanifest.template" />
+    <ProjectReference Include="..\OpenCVCameraTracking\OpenCVCameraTracking.csproj">
+      <Project>{DFD87969-650E-4D15-9574-6C1DF607019D}</Project>
+      <Name>OpenCVCameraTracking</Name>
+      <TargetPath>..\OpenCVCameraTracking\bin\$(Platform)\$(Configuration)\net8.0-windows\win-x64\msixpublish\OpenCVCameraTracking.exe</TargetPath>
+    </ProjectReference>
+    <Content Include="Images\Square44x44Logo.png" />
+    <Content Include="Images\Square150x150Logo.png" />
+    <Content Include="Images\StoreLogo.png" />
+    <Content Include="Images\Wide310x150Logo.png" />
+  </ItemGroup>
+
+  <Import Project="$(WapProjPath)\Microsoft.DesktopBridge.targets" />
+
+  <Target Name="GenerateStorePackageManifest" BeforeTargets="_ValidatePresenceOfAppxManifestItems;BeforeGenerateAppxManifest">
+    <PropertyGroup>
+      <_ManifestTemplateText>$([System.IO.File]::ReadAllText('$(MSBuildProjectDirectory)\Package.appxmanifest.template'))</_ManifestTemplateText>
+      <_ManifestWithIdentity>$([System.String]::Copy('$(_ManifestTemplateText)').Replace('__STORE_PACKAGE_IDENTITY_NAME__', '$(StorePackageIdentityName)').Replace('__STORE_PUBLISHER__', '$(StorePublisher)').Replace('__STORE_PUBLISHER_DISPLAY_NAME__', '$(StorePublisherDisplayName)').Replace('__STORE_PACKAGE_DISPLAY_NAME__', '$(StorePackageDisplayName)').Replace('__STORE_PACKAGE_VERSION__', '$(StorePackageVersion)'))</_ManifestWithIdentity>
+    </PropertyGroup>
+    <WriteLinesToFile File="$(IntermediateOutputPath)Package.appxmanifest" Lines="$(_ManifestWithIdentity)" Overwrite="true" />
+  </Target>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.22621.756" PrivateAssets="all" />
+  </ItemGroup>
+</Project>

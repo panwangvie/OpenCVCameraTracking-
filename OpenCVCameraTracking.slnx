@@ -1,6 +1,20 @@
 <Solution>
+  <Configurations>
+    <Platform Name="Any CPU" />
+    <Platform Name="ARM" />
+    <Platform Name="ARM64" />
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
   <Folder Name="/src/">
     <Project Path="src/OpenCVCameraTracking.Core/OpenCVCameraTracking.Core.csproj" />
     <Project Path="src/OpenCVCameraTracking/OpenCVCameraTracking.csproj" />
   </Folder>
+  <Project Path="src/OpenCVCameraTracking.Package/OpenCVCameraTracking.Package.wapproj"
+           Type="c7167f0d-bc9f-4e6e-afe1-012c56b48db5"
+           Id="3e9ae7b1-5481-4c59-96fd-c02c46c8622a">
+    <BuildType Solution="Debug|x64" Project="Debug" />
+    <BuildType Solution="Release|x64" Project="Release" />
+    <Deploy />
+  </Project>
 </Solution>

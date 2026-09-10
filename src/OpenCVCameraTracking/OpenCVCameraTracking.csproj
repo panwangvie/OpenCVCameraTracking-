@@ -10,7 +10,9 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
     <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
+    <ProjectGuid>{DFD87969-650E-4D15-9574-6C1DF607019D}</ProjectGuid>
   </PropertyGroup>
 
   <ItemGroup>

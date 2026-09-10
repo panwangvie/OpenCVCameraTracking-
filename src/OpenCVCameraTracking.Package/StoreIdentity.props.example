@@ -1,0 +1,11 @@
+<Project>
+  <PropertyGroup>
+    <StorePackageIdentityName>wuty.CameraTracking</StorePackageIdentityName>
+    <StorePublisher>CN=REPLACE-WITH-YOUR-MICROSOFT-STORE-PUBLISHER</StorePublisher>
+    <StorePublisherDisplayName>wuty</StorePublisherDisplayName>
+    <StorePackageDisplayName>CameraTracking</StorePackageDisplayName>
+    <StorePackageVersion>1.0.0.0</StorePackageVersion>
+    <LocalSigningCertificatePath>Certificates\OpenCVCameraTracking.LocalTest.pfx</LocalSigningCertificatePath>
+    <LocalSigningCertificatePassword></LocalSigningCertificatePassword>
+  </PropertyGroup>
+</Project>

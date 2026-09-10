@@ -39,6 +39,10 @@ dotnet run --project src/OpenCVCameraTracking/OpenCVCameraTracking.csproj
 
 也可以在 Visual Studio 中打开 `OpenCVCameraTracking.slnx`，将 `OpenCVCameraTracking` 设为启动项目。
 
+## Microsoft Store MSIX 打包
+
+项目包含 `src/OpenCVCameraTracking.Package/OpenCVCameraTracking.Package.wapproj`，用于生成 x64 Microsoft Store 上传包。商店发布标识从本机的 `StoreIdentity.props` 读取，该文件不会提交到 Git；详细配置与构建命令见 [打包工程说明](src/OpenCVCameraTracking.Package/README.md)、[完整发布指南](docs/MSIX-打包与微软商店发布指南.md)、[中文商店页面资料](docs/Microsoft-Store商店资料.md) 和 [美国区英文商店资料](docs/Microsoft-Store-Listing-US.md)。
+
 ## 人脸检测
 
 默认的“人脸（YuNet，推荐）”比旧 Haar 模型更适合以下场景：
