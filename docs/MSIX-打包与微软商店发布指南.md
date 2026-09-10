@@ -14,7 +14,7 @@
 当前应用的 Store 身份为：
 
 ```text
-Identity Name: wuty.CameraTracking
+Identity Name: YOUR_STORE_PACKAGE_IDENTITY_NAME
 Publisher: CN=REPLACE-WITH-YOUR-MICROSOFT-STORE-PUBLISHER
 PublisherDisplayName: wuty
 ```
@@ -64,7 +64,7 @@ Copy-Item .\src\OpenCVCameraTracking.Package\StoreIdentity.props.example `
 ```xml
 <Project>
   <PropertyGroup>
-    <StorePackageIdentityName>wuty.CameraTracking</StorePackageIdentityName>
+    <StorePackageIdentityName>YOUR_STORE_PACKAGE_IDENTITY_NAME</StorePackageIdentityName>
     <StorePublisher>CN=REPLACE-WITH-YOUR-MICROSOFT-STORE-PUBLISHER</StorePublisher>
     <StorePublisherDisplayName>wuty</StorePublisherDisplayName>
     <StorePackageDisplayName>CameraTracking</StorePackageDisplayName>
@@ -180,7 +180,7 @@ src\OpenCVCameraTracking.Package\AppPackages\
 5. 检查上传后的包身份：
 
    ```text
-   Name: wuty.CameraTracking
+   Name: YOUR_STORE_PACKAGE_IDENTITY_NAME
    Publisher: CN=REPLACE-WITH-YOUR-MICROSOFT-STORE-PUBLISHER
    Architecture: x64
    Version: 当前 StorePackageVersion
@@ -209,7 +209,7 @@ AppListEntry="none"
 可用以下命令检查当前用户是否已安装包：
 
 ```powershell
-Get-AppxPackage -Name wuty.CameraTracking |
+Get-AppxPackage -Name YOUR_STORE_PACKAGE_IDENTITY_NAME |
   Select-Object Name, PackageFullName, Status, InstallLocation
 ```
 

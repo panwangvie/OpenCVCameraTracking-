@@ -1,6 +1,6 @@
 <Project>
   <PropertyGroup>
-    <StorePackageIdentityName>wuty.CameraTracking</StorePackageIdentityName>
+    <StorePackageIdentityName>YOUR_STORE_PACKAGE_IDENTITY_NAME</StorePackageIdentityName>
     <StorePublisher>CN=REPLACE-WITH-YOUR-MICROSOFT-STORE-PUBLISHER</StorePublisher>
     <StorePublisherDisplayName>wuty</StorePublisherDisplayName>
     <StorePackageDisplayName>CameraTracking</StorePackageDisplayName>

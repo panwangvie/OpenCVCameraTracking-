@@ -220,7 +220,7 @@ CameraTracking 默认在本地处理摄像头和视频流。白名单样本、�
 - [ ] 产品功能不超过 20 项。
 - [ ] 至少上传 1 张桌面截图，建议上传 4～5 张。
 - [ ] 截图不含密码、私人 RTSP 地址或个人隐私信息。
-- [ ] 包中的 `Identity Name` 为 `wuty.CameraTracking`。
+- [ ] 包中的 `Identity Name` 已替换为 Partner Center 分配的值（不要将真实值提交到公开仓库）。
 - [ ] 包中的 `Publisher` 已替换为 Partner Center 分配的 CN（不要将真实 CN 提交到公开仓库）。
 - [ ] 版本号使用 `主版本.次版本.修订.0` 格式，例如 `1.0.1.0`。
 - [ ] 上传最新的 `.msixupload` 文件。
