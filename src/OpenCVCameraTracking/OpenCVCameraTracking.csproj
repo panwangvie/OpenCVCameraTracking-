@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\OpenCVCameraTracking.Core\OpenCVCameraTracking.Core.csproj" />
+    <PackageReference Include="log4net" Version="2.0.17" />
   </ItemGroup>
 
   <PropertyGroup>

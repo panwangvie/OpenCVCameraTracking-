@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.ComTypes;
+using OpenCVCameraTracking.Core.Logging;
 
 namespace OpenCVCameraTracking.Core.Camera;
 
@@ -10,6 +11,7 @@ public static class DirectShowCameraEnumerator
 
     public static IReadOnlyList<CameraDeviceInfo> GetVideoInputDevices()
     {
+        AppLogger.Info("Enumerating video input devices");
         var devices = new List<CameraDeviceInfo>();
         ICreateDevEnum? deviceEnumerator = null;
         IEnumMoniker? monikerEnumerator = null;
@@ -55,6 +57,7 @@ public static class DirectShowCameraEnumerator
         }
         catch (COMException)
         {
+            AppLogger.Warn($"Camera enumeration returned {devices.Count} device(s) after a COM metadata error");
             // Some virtual-camera drivers expose incomplete COM metadata. Returning
             // the devices discovered so far is more useful than failing enumeration.
         }

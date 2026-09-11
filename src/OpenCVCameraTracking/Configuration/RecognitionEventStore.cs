@@ -10,7 +10,8 @@ public sealed record RecognitionEventRecord(
     string? IdentityName,
     bool IsKnown,
     int TrackId,
-    double? Distance);
+    double? Distance,
+    double? Similarity);
 
 public sealed class RecognitionEventStore
 {

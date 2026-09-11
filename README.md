@@ -18,7 +18,7 @@
 - 支持自定义 YOLOv5/YOLOv8 ONNX 模型。
 - "人 + 动物"复合检测：YuNet 人脸与动物检测并发运行，两类目标同时显示并独立跟踪。
 - IoU 多目标关联、位置平滑和短时丢失保留，画面中显示稳定目标编号。
-- 本地人脸/猫白名单：支持从当前画面自动抓取或拖拽圈选区域录入样本，使用 OpenCV LBPH 进行轻量级身份匹配。
+- 本地人脸/猫白名单：支持从当前画面自动抓取或拖拽圈选区域录入样本；人脸使用 YuNet 五点对齐与 SFace ONNX 特征向量匹配，猫保留 OpenCV LBPH 轻量级匹配。
 - 白名单成员按最近录入时间倒序显示，样本列表提供缩略图，双击缩略图可查看大图。
 - 已知目标与陌生目标事件记录；陌生人或未录入的猫出现时显示红色提示。
 - 设置窗口可管理多个网络视频流并记住默认选择。
@@ -43,6 +43,8 @@ dotnet run --project src/OpenCVCameraTracking/OpenCVCameraTracking.csproj
 
 项目包含 `src/OpenCVCameraTracking.Package/OpenCVCameraTracking.Package.wapproj`，用于生成 x64 Microsoft Store 上传包。商店发布标识从本机的 `StoreIdentity.props` 读取，该文件不会提交到 Git；详细配置与构建命令见 [打包工程说明](src/OpenCVCameraTracking.Package/README.md)、[完整发布指南](docs/MSIX-打包与微软商店发布指南.md)、[中文商店页面资料](docs/Microsoft-Store商店资料.md) 和 [美国区英文商店资料](docs/Microsoft-Store-Listing-US.md)。
 
+运行日志由 log4net 在代码中配置，默认写入 `%LocalAppData%\\OpenCVCameraTracking\\Logs\\application.log`；识别事件另存为 `recognition-events.jsonl`。日志仅记录操作和诊断信息，不记录完整 RTSP 地址或商店发布证书内容。
+
 ## 人脸检测
 
 默认的“人脸（YuNet，推荐）”比旧 Haar 模型更适合以下场景：
@@ -66,7 +68,9 @@ dotnet run --project src/OpenCVCameraTracking/OpenCVCameraTracking.csproj
 
 也可以在白名单弹窗中点击“圈选录入”，打开独立的圈选画面，在预览中拖拽框选人脸或猫，并填写名称；名称和有效选区完成后“确定”按钮才可用，确认后返回白名单窗口并保存样本。
 
-人脸使用 YuNet/Haar 提供的检测框；猫使用 YOLO 动物检测框的上半部分作为近似脸部/外观区域。身份匹配使用 OpenCV `LBPHFaceRecognizer`，适合本地轻量级白名单，但不等同于高安全等级的人脸认证。光照、角度和遮挡变化较大时应录入更多样本，门禁等高风险场景建议替换为专用的人脸或宠物 ReID 模型。
+YuNet 模式会保留双眼、鼻尖和嘴角五个关键点，将人脸对齐后交给 SFace ONNX（随应用内置，无需额外下载）提取特征向量，再使用余弦相似度匹配；连续 5 次结果中至少 3 次一致才确认身份或陌生人。检测框会分别显示 `det`（人脸检测置信度）和 `match`（与白名单最接近样本的匹配度）。猫使用 YOLO 检测框上半部分和 `LBPHFaceRecognizer` 进行轻量级外观匹配。该功能不是高安全等级的生物认证，门禁等高风险场景仍应使用经过认证的专用方案。
+
+升级前由 LBPH 保存的人脸样本缺少原始颜色和五点关键点信息，应用仍会尝试读取，但建议删除旧人脸样本，并重新录入正面、左侧、右侧、轻微抬头和低头等 3～5 个清晰样本。
 
 白名单样本和元数据保存在：
 
@@ -74,7 +78,7 @@ dotnet run --project src/OpenCVCameraTracking/OpenCVCameraTracking.csproj
 %LocalAppData%\OpenCVCameraTracking\Whitelist
 ```
 
-其中 `profiles.json` 保存成员名称、类型和创建时间，`samples\<profile-id>\*.png` 保存归一化后的样本图片。白名单窗口底部会显示当前实际存储目录。
+其中 `profiles.json` 保存成员名称、类型和创建时间，`samples\<profile-id>\*.png` 保存对齐后的人脸或归一化猫脸样本图片。白名单窗口底部会显示当前实际存储目录。
 
 识别事件以 JSON Lines 格式记录在：
 
@@ -255,7 +259,8 @@ await engine.DisposeAsync();
 - `Detection/YoloOnnxDetector.cs`：自定义 YOLOv5/YOLOv8 模型解析。
 - `Detection/CompositeObjectDetector.cs`：多检测器组合，并发推理并按标签去重。
 - `Tracking/IouMultiObjectTracker.cs`：目标关联、编号和边框平滑。
-- `Recognition/WhitelistRecognitionService.cs`：白名单样本管理、LBPH 训练和身份匹配。
+- `Recognition/WhitelistRecognitionService.cs`：白名单样本管理、SFace/LBPH 匹配和多帧投票。
+- `Recognition/SFaceEmbeddingExtractor.cs`：五点相似变换对齐、SFace ONNX 推理和余弦相似度计算。
 - `WhitelistWindow.xaml`：人脸/猫白名单录入、追加样本和删除。
 - `Configuration/RecognitionEventStore.cs`：识别事件 JSONL 记录。
 - `Configuration/SettingsStore.cs`：JSON 设置持久化。
@@ -264,11 +269,21 @@ await engine.DisposeAsync();
 
 ## 模型来源
 
-- YuNet：<https://github.com/opencv/opencv_zoo/tree/main/models/face_detection_yunet>
-- YOLOX：<https://github.com/opencv/opencv_zoo/tree/main/models/object_detection_yolox>
+- YuNet 人脸检测：<https://github.com/opencv/opencv_zoo/tree/main/models/face_detection_yunet>
+- SFace 人脸识别（白名单特征向量）：<https://github.com/opencv/opencv_zoo/tree/main/models/face_recognition_sface>
+- YOLOX 动物检测：<https://github.com/opencv/opencv_zoo/tree/main/models/object_detection_yolox>
 - Haar cascade：<https://github.com/opencv/opencv/tree/4.x/data/haarcascades>
 
-模型目录同时包含对应许可证文本。
+内置模型位于 `src/OpenCVCameraTracking/Assets/Models/`：
+
+| 文件 | 用途 | 大小 |
+| --- | --- | --- |
+| `face_detection_yunet_2023mar.onnx` | 人脸检测 | 约 0.2 MB |
+| `face_recognition_sface_2021dec.onnx` | 人脸识别特征向量 | 约 37 MB |
+| `object_detection_yolox_2022nov_int8.onnx` | 动物检测 | 约 8.7 MB |
+| `haarcascade_frontalface_default.xml` | Haar 兼容检测 | 约 0.9 MB |
+
+这些模型会随应用一起分发，无需额外下载。模型目录同时包含对应许可证文本，来源与 SHA-256 见 `Assets/Models/README.txt`。
 
 ## 验证
 

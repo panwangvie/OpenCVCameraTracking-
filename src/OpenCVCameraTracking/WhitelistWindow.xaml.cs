@@ -1,3 +1,4 @@
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -5,6 +6,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using CvRect = OpenCvSharp.Rect;
 using OpenCVCameraTracking.Core.Recognition;
+using OpenCVCameraTracking.Core.Logging;
 using OpenCVCameraTracking.Localization;
 
 namespace OpenCVCameraTracking;
@@ -15,18 +17,21 @@ public partial class WhitelistWindow : Window
     private readonly Func<string, WhitelistSubjectKind, WhitelistEnrollmentResult> _enrollCurrent;
     private readonly Func<RegionSelectionResult?>? _selectRegion;
     private readonly Func<CvRect, string, WhitelistSubjectKind, WhitelistEnrollmentResult>? _enrollRegion;
+    private readonly Action? _profilesChanged;
 
     public WhitelistWindow(
         WhitelistRecognitionService service,
         Func<string, WhitelistSubjectKind, WhitelistEnrollmentResult> enrollCurrent,
         Func<RegionSelectionResult?>? selectRegion = null,
-        Func<CvRect, string, WhitelistSubjectKind, WhitelistEnrollmentResult>? enrollRegion = null)
+        Func<CvRect, string, WhitelistSubjectKind, WhitelistEnrollmentResult>? enrollRegion = null,
+        Action? profilesChanged = null)
     {
         InitializeComponent();
         _service = service;
         _enrollCurrent = enrollCurrent;
         _selectRegion = selectRegion;
         _enrollRegion = enrollRegion;
+        _profilesChanged = profilesChanged;
         StoragePathText.Text = service.StorageDirectory;
         RefreshProfiles();
     }
@@ -54,6 +59,7 @@ public partial class WhitelistWindow : Window
         {
             NameBox.Clear();
             RefreshProfiles();
+            _profilesChanged?.Invoke();
             ShowInformation(LocalizationManager.Format(
                 "WhitelistEnrollSuccess",
                 result.Profile!.Name,
@@ -80,6 +86,7 @@ public partial class WhitelistWindow : Window
         {
             NameBox.Clear();
             RefreshProfiles();
+            _profilesChanged?.Invoke();
             ShowInformation(LocalizationManager.Format(
                 "WhitelistEnrollSuccess",
                 result.Profile!.Name,
@@ -99,8 +106,15 @@ public partial class WhitelistWindow : Window
         ShowInformation(LocalizationManager.Get(resourceKey));
     }
 
-    private void DeleteButton_OnClick(object sender, RoutedEventArgs e)
+    private bool _isDeleting;
+
+    private async void DeleteButton_OnClick(object sender, RoutedEventArgs e)
     {
+        if (_isDeleting)
+        {
+            return;
+        }
+
         if (ProfileList.SelectedItem is not ProfileItem selected)
         {
             ShowInformation(LocalizationManager.Get("WhitelistSelectDelete"));
@@ -118,13 +132,46 @@ public partial class WhitelistWindow : Window
             return;
         }
 
-        _service.Delete(selected.Id);
-        RefreshProfiles();
+        // Images in the list used to be URI-backed and could keep a PNG handle
+        // open. Clear the visual tree before deleting; thumbnails are also loaded
+        // into memory by LoadBitmap below.
+        ProfileList.SelectedItem = null;
+        ProfileList.ItemsSource = null;
+        ProfileList.UpdateLayout();
+        _isDeleting = true;
+        DeleteButton.IsEnabled = false;
+        AppLogger.Info($"User requested whitelist deletion: profile={selected.Name}");
+        try
+        {
+            // Directory enumeration/deletion, profile persistence and model
+            // rebuilding are all offloaded so the WPF dispatcher stays responsive.
+            var deleted = await Task.Run(() => _service.Delete(selected.Id));
+            if (deleted)
+            {
+                RefreshProfiles();
+                _profilesChanged?.Invoke();
+            }
+        }
+        catch (IOException)
+        {
+            RefreshProfiles();
+            ShowInformation(LocalizationManager.Get("WhitelistDeleteFailed"));
+        }
+        catch (UnauthorizedAccessException)
+        {
+            RefreshProfiles();
+            ShowInformation(LocalizationManager.Get("WhitelistDeleteFailed"));
+        }
+        finally
+        {
+            _isDeleting = false;
+            DeleteButton.IsEnabled = true;
+        }
     }
 
     private void RefreshProfiles()
     {
-        ProfileList.ItemsSource = _service.GetProfiles()
+        var profiles = _service.GetProfiles()
             .Select(profile => new ProfileItem(
                 profile.Id,
                 profile.Name,
@@ -132,8 +179,13 @@ public partial class WhitelistWindow : Window
                     ? LocalizationManager.Get("WhitelistFace")
                     : LocalizationManager.Get("WhitelistCat"),
                 LocalizationManager.Format("WhitelistSampleCount", profile.SampleCount),
-                _service.GetSamplePaths(profile.Id).Select(path => new SampleItem(path)).ToArray()))
+                _service.GetSamplePaths(profile.Id)
+                    .Select(path => (Path: path, Bitmap: TryLoadBitmap(path)))
+                    .Where(item => item.Bitmap is not null)
+                    .Select(item => new SampleItem(item.Path, item.Bitmap!))
+                    .ToArray()))
             .ToArray();
+        ProfileList.ItemsSource = profiles;
     }
 
     private void Sample_OnMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -145,7 +197,7 @@ public partial class WhitelistWindow : Window
 
         var image = new Image
         {
-            Source = new BitmapImage(new Uri(sample.Path)),
+            Source = sample.Thumbnail,
             Stretch = Stretch.Uniform,
             Margin = new Thickness(12)
         };
@@ -170,6 +222,31 @@ public partial class WhitelistWindow : Window
         MessageBoxButton.OK,
         MessageBoxImage.Information);
 
+    private BitmapSource? TryLoadBitmap(string path)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+            {
+                AppLogger.Warn($"Whitelist sample file is missing: {path ?? "<null>"}");
+                return null;
+            }
+
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            var bitmap = BitmapFrame.Create(
+                stream,
+                BitmapCreateOptions.PreservePixelFormat,
+                BitmapCacheOption.OnLoad);
+            bitmap.Freeze();
+            return bitmap;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or NotSupportedException or ArgumentException)
+        {
+            AppLogger.Warn($"Unable to load whitelist sample: {path}; {exception.Message}");
+            return null;
+        }
+    }
+
     private void CloseButton_OnClick(object sender, RoutedEventArgs e) => Close();
 
     private sealed record ProfileItem(
@@ -179,5 +256,5 @@ public partial class WhitelistWindow : Window
         string SampleText,
         IReadOnlyList<SampleItem> Samples);
 
-    private sealed record SampleItem(string Path);
+    private sealed record SampleItem(string Path, BitmapSource Thumbnail);
 }

@@ -69,7 +69,7 @@
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
                                     <Border Margin="0,4,6,4" BorderBrush="#34454F" BorderThickness="1">
-                                        <Image Source="{Binding Path}" Width="64" Height="64" Stretch="UniformToFill"
+                                        <Image Source="{Binding Thumbnail}" Width="64" Height="64" Stretch="UniformToFill"
                                                MouseLeftButtonDown="Sample_OnMouseLeftButtonDown" />
                                     </Border>
                                 </DataTemplate>
@@ -86,7 +86,7 @@
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
-            <Button Content="{DynamicResource DeleteSelected}" Click="DeleteButton_OnClick"
+            <Button x:Name="DeleteButton" Content="{DynamicResource DeleteSelected}" Click="DeleteButton_OnClick"
                     Background="#6C2D35" BorderBrush="#A74652" />
             <TextBlock x:Name="StoragePathText" Grid.Column="1" Foreground="#70838E"
                        TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="10,0" />

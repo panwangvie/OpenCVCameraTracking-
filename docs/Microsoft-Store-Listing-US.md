@@ -15,7 +15,7 @@ CameraTracking is a Windows real-time camera and video analysis tool built with 
 
 The app includes a YuNet ONNX face detection model and a YOLOX INT8 animal detection model. You can also import compatible YOLOv5 or YOLOv8 ONNX models. RTSP mode includes TCP transport, read timeouts, automatic reconnect, and low-latency latest-frame processing for surveillance cameras and local network video sources.
 
-CameraTracking provides a local face and cat whitelist. Capture a detected target from the current frame or drag to select a region in the enrollment window, then save it with a name. Known targets are shown in green; unknown people or cats are shown in red and can be recorded as events. Whitelist samples are stored locally and matched with OpenCV LBPH.
+CameraTracking provides a local face and cat whitelist. Capture a detected target from the current frame or drag to select a region in the enrollment window, then save it with a name. Known targets are shown in green; unknown people or cats are shown in red and can be recorded as events. Human faces use YuNet five-point alignment and SFace embeddings, while cats use lightweight OpenCV LBPH matching. Whitelist samples are stored locally.
 
 All video processing is performed locally. Configure multiple video sources, detection thresholds, language, and a dark WPF interface for camera testing, development, home pet monitoring, and lightweight visual analysis.
 ```

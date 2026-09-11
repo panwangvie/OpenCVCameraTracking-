@@ -4,6 +4,7 @@ using OpenCVCameraTracking.Core.Camera;
 using OpenCVCameraTracking.Core.Detection;
 using OpenCVCameraTracking.Core.Recognition;
 using OpenCVCameraTracking.Core.Tracking;
+using OpenCVCameraTracking.Core.Logging;
 using OpenCvSharp;
 
 namespace OpenCVCameraTracking.Core;
@@ -74,7 +75,9 @@ public sealed class CameraTrackingEngine : IAsyncDisposable
         }
 
         Validate(options);
+        AppLogger.Info($"Tracking start requested: source={options.Kind}, detector={_detector.GetType().Name}, interval={_detectionInterval}");
         _tracker.Reset();
+        _whitelistRecognition?.ResetTracking();
         ClearLatestSnapshot();
         _cancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         _worker = Task.Run(() => CaptureLoop(options, _cancellation.Token), CancellationToken.None);
@@ -104,6 +107,7 @@ public sealed class CameraTrackingEngine : IAsyncDisposable
             _cancellation = null;
             ClearLatestSnapshot();
             StatusChanged?.Invoke(this, "Stopped");
+            AppLogger.Info("Tracking stopped");
         }
     }
 
@@ -158,6 +162,7 @@ public sealed class CameraTrackingEngine : IAsyncDisposable
         }
 
         Mat? frame;
+        IReadOnlyList<TrackedObject> objects;
         lock (_latestSnapshotGate)
         {
             if (_latestFrame is null)
@@ -166,10 +171,26 @@ public sealed class CameraTrackingEngine : IAsyncDisposable
             }
 
             frame = _latestFrame.Clone();
+            objects = _latestObjects;
         }
 
         using (frame)
         {
+            if (kind == WhitelistSubjectKind.Face)
+            {
+                var target = objects
+                    .Where(item => string.Equals(item.Label, "face", StringComparison.OrdinalIgnoreCase))
+                    .Select(item => new { Item = item, Overlap = IntersectionArea(item.Box, region) })
+                    .Where(candidate => candidate.Overlap > 0)
+                    .OrderByDescending(candidate => candidate.Overlap)
+                    .Select(candidate => candidate.Item)
+                    .FirstOrDefault();
+                if (target is not null)
+                {
+                    return _whitelistRecognition.Enroll(frame, target, name, kind);
+                }
+            }
+
             return _whitelistRecognition.Enroll(frame, region, name, kind);
         }
     }
@@ -189,6 +210,7 @@ public sealed class CameraTrackingEngine : IAsyncDisposable
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
+            AppLogger.Error("Capture loop faulted", exception);
             Faulted?.Invoke(this, exception);
         }
     }
@@ -205,6 +227,7 @@ public sealed class CameraTrackingEngine : IAsyncDisposable
         {
             using var capture = OpenCapture(options);
             StatusChanged?.Invoke(this, "Connected");
+            AppLogger.Info($"Capture connected: source={options.Kind}");
             var consecutiveFailures = 0;
 
             while (!cancellationToken.IsCancellationRequested)
@@ -288,6 +311,7 @@ public sealed class CameraTrackingEngine : IAsyncDisposable
             {
                 using var capture = OpenCapture(options);
                 StatusChanged?.Invoke(this, "Connected");
+                AppLogger.Info("Low-latency capture connected");
                 var consecutiveFailures = 0;
                 while (!cancellationToken.IsCancellationRequested)
                 {
@@ -449,9 +473,13 @@ public sealed class CameraTrackingEngine : IAsyncDisposable
                 false => "unknown",
                 _ => null
             };
+            var detectionScore = $"det {item.Confidence:P0}";
+            var matchScore = item.RecognitionSimilarity is { } similarity
+                ? $"  match {similarity:P0}"
+                : string.Empty;
             var caption = string.IsNullOrWhiteSpace(identity)
-                ? $"{item.Label} #{item.Id}  {item.Confidence:P0}"
-                : $"{item.Label} {identity} #{item.Id}  {item.Confidence:P0}";
+                ? $"{item.Label} #{item.Id}  {detectionScore}{matchScore}"
+                : $"{item.Label} {identity} #{item.Id}  {detectionScore}{matchScore}";
             var textSize = Cv2.GetTextSize(caption, HersheyFonts.HersheySimplex, 0.55, 1, out var baseline);
             var textTop = Math.Max(0, item.Box.Y - textSize.Height - baseline - 6);
             var background = new Rect(
@@ -470,6 +498,14 @@ public sealed class CameraTrackingEngine : IAsyncDisposable
                 1,
                 LineTypes.AntiAlias);
         }
+    }
+
+    private static int IntersectionArea(Rect first, Rect second)
+    {
+        var intersection = first & second;
+        return intersection.Width > 0 && intersection.Height > 0
+            ? intersection.Width * intersection.Height
+            : 0;
     }
 
     private static Scalar ColorForId(int id)

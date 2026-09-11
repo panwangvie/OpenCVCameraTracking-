@@ -90,7 +90,7 @@
     <sys:String x:Key="WhitelistFace">人脸</sys:String>
     <sys:String x:Key="WhitelistCat">猫脸（检测框上半部）</sys:String>
     <sys:String x:Key="CaptureEnroll">抓取当前目标并录入</sys:String>
-    <sys:String x:Key="WhitelistEnrollHint">请先启动视频，并确保画面中有清晰的人脸或猫。相同名称可多次录入，建议从不同角度录入 3～5 个样本。</sys:String>
+    <sys:String x:Key="WhitelistEnrollHint">请先启动视频，并确保画面中有清晰的人脸或猫。人脸建议用同一名称录入正面、左侧、右侧、轻微抬头和低头等 3～5 个样本。</sys:String>
     <sys:String x:Key="WhitelistMembers">白名单成员</sys:String>
     <sys:String x:Key="WhitelistSampleCount">{0} 个样本</sys:String>
     <sys:String x:Key="DeleteSelected">删除选中成员</sys:String>
@@ -103,6 +103,7 @@
     <sys:String x:Key="WhitelistUnavailable">白名单识别服务当前不可用。</sys:String>
     <sys:String x:Key="WhitelistSelectDelete">请先选择要删除的白名单成员。</sys:String>
     <sys:String x:Key="WhitelistDeleteConfirm">确定删除“{0}”及其全部样本吗？</sys:String>
+    <sys:String x:Key="WhitelistDeleteFailed">样本文件仍被占用，暂时无法删除。请关闭样本预览窗口后重试。</sys:String>
     <sys:String x:Key="KnownRecognition">已识别：{0}（{1}）</sys:String>
     <sys:String x:Key="UnknownFaceAlert">检测到陌生人</sys:String>
     <sys:String x:Key="UnknownCatAlert">检测到未录入的猫</sys:String>

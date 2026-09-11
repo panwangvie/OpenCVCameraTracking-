@@ -13,6 +13,7 @@ using OpenCVCameraTracking.Core.Camera;
 using OpenCVCameraTracking.Core.Detection;
 using OpenCVCameraTracking.Core.Recognition;
 using OpenCVCameraTracking.Core.Tracking;
+using OpenCVCameraTracking.Core.Logging;
 using OpenCVCameraTracking.Configuration;
 using OpenCVCameraTracking.Localization;
 using Microsoft.Win32;
@@ -25,6 +26,7 @@ public partial class MainWindow : Window
     private readonly WhitelistRecognitionService _whitelistRecognition = new();
     private readonly RecognitionEventStore _recognitionEventStore = new();
     private readonly Dictionary<int, string> _recognitionStates = [];
+    private readonly List<RecentRecognitionEvent> _recentRecognitionEvents = [];
     private readonly DispatcherTimer _unknownAlertTimer;
     private CameraTrackingEngine? _engine;
     private WriteableBitmap? _previewBitmap;
@@ -73,11 +75,13 @@ public partial class MainWindow : Window
     {
         try
         {
+            AppLogger.Info("User clicked start tracking");
             await StopEngineAsync();
             PersistUiSelection();
             var detector = CreateDetector();
-            var tracker = new IouMultiObjectTracker(minimumIou: 0.18f, maximumMisses: 12, smoothing: 0.72f);
+            var tracker = new IouMultiObjectTracker(minimumIou: 0.18f, maximumMisses: 8, smoothing: 0.72f);
             _recognitionStates.Clear();
+            _recentRecognitionEvents.Clear();
             _engine = new CameraTrackingEngine(
                 detector,
                 detectionInterval: 1,
@@ -95,6 +99,7 @@ public partial class MainWindow : Window
         }
         catch (Exception exception)
         {
+            AppLogger.Error("Unable to start tracking", exception);
             await StopEngineAsync();
             MessageBox.Show(
                 this,
@@ -200,6 +205,13 @@ public partial class MainWindow : Window
         {
             try
             {
+                // A frame may already be queued when Stop is clicked. Ignore
+                // callbacks from that disposed engine so the preview stays blank.
+                if (_isClosing || !ReferenceEquals(sender, _engine))
+                {
+                    return;
+                }
+
                 if (_previewBitmap is null ||
                     _previewBitmap.PixelWidth != e.Width ||
                     _previewBitmap.PixelHeight != e.Height)
@@ -239,6 +251,7 @@ public partial class MainWindow : Window
     private void EngineOnFaulted(object? sender, Exception exception) =>
         _ = Dispatcher.InvokeAsync(async () =>
         {
+            AppLogger.Error("Tracking engine reported a fault", exception);
             var message = exception.InnerException?.Message ?? exception.Message;
             StatusText.Text = LocalizationManager.Format("Status_Error", message);
             if (!_isClosing)
@@ -260,6 +273,7 @@ public partial class MainWindow : Window
         _engine = null;
         if (engine is not null)
         {
+            AppLogger.Info("Stopping tracking engine");
             engine.FrameReady -= EngineOnFrameReady;
             engine.StatusChanged -= EngineOnStatusChanged;
             engine.Faulted -= EngineOnFaulted;
@@ -269,6 +283,12 @@ public partial class MainWindow : Window
         StartButton.IsEnabled = true;
         StopButton.IsEnabled = false;
         SetConfigurationEnabled(true);
+        _previewBitmap = null;
+        _latestFrameWidth = 0;
+        _latestFrameHeight = 0;
+        PreviewImage.Source = null;
+        PreviewPlaceholder.Visibility = Visibility.Visible;
+        MetricsText.Text = LocalizationManager.Format("MetricsFormat", 0d, 0);
     }
 
     private void SetConfigurationEnabled(bool enabled)
@@ -406,6 +426,7 @@ public partial class MainWindow : Window
         }
 
         _settings = window.Result;
+        AppLogger.Info($"User saved settings: language={_settings.Language}, sourceKind={_settings.SelectedSourceKind}");
         ((App)Application.Current).Settings = _settings;
         SettingsStore.Save(_settings);
         LocalizationManager.Apply(_settings.Language);
@@ -420,7 +441,8 @@ public partial class MainWindow : Window
                 ?? new WhitelistEnrollmentResult(WhitelistEnrollmentStatus.NoFrame),
             SelectRegionFromCurrentFrame,
             (region, name, kind) => _engine?.EnrollCurrentRegion(region, name, kind)
-                ?? new WhitelistEnrollmentResult(WhitelistEnrollmentStatus.NoFrame))
+                ?? new WhitelistEnrollmentResult(WhitelistEnrollmentStatus.NoFrame),
+            UpdateWhitelistSummary)
         {
             Owner = this
         };
@@ -462,6 +484,12 @@ public partial class MainWindow : Window
             }
 
             _recognitionStates[item.Id] = state;
+            if (IsDuplicateRecognitionEvent(item, state))
+            {
+                continue;
+            }
+
+            RememberRecognitionEvent(item, state);
             var typeName = kind == WhitelistSubjectKind.Face
                 ? LocalizationManager.Get("WhitelistFace")
                 : LocalizationManager.Get("WhitelistCat");
@@ -471,20 +499,25 @@ public partial class MainWindow : Window
                     ? "UnknownFaceAlert"
                     : "UnknownCatAlert");
 
-            try
+            var eventRecord = new RecognitionEventRecord(
+                DateTimeOffset.Now,
+                kind,
+                item.IdentityName,
+                item.IsKnown == true,
+                item.Id,
+                item.RecognitionDistance,
+                item.RecognitionSimilarity);
+            _ = Task.Run(() =>
             {
-                _recognitionEventStore.Append(new RecognitionEventRecord(
-                    DateTimeOffset.Now,
-                    kind,
-                    item.IdentityName,
-                    item.IsKnown == true,
-                    item.Id,
-                    item.RecognitionDistance));
-            }
-            catch (IOException)
-            {
-                // Recognition must keep running even if the local event log is temporarily unavailable.
-            }
+                try
+                {
+                    _recognitionEventStore.Append(eventRecord);
+                }
+                catch (IOException)
+                {
+                    // Recognition must keep running if the local event log is busy.
+                }
+            });
 
             if (RecognitionLogBox.Items.Count == 1 &&
                 RecognitionLogBox.Items[0] is ListBoxItem placeholder &&
@@ -511,10 +544,42 @@ public partial class MainWindow : Window
         }
     }
 
+    private bool IsDuplicateRecognitionEvent(TrackedObject item, string state)
+    {
+        var now = DateTimeOffset.Now;
+        _recentRecognitionEvents.RemoveAll(candidate => now - candidate.Timestamp > TimeSpan.FromSeconds(5));
+        return _recentRecognitionEvents.Any(candidate =>
+            string.Equals(candidate.Label, item.Label, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(candidate.State, state, StringComparison.Ordinal) &&
+            IntersectionOverUnion(candidate.Box, item.Box) >= 0.15f);
+    }
+
+    private void RememberRecognitionEvent(TrackedObject item, string state) =>
+        _recentRecognitionEvents.Add(new RecentRecognitionEvent(
+            DateTimeOffset.Now,
+            item.Label,
+            state,
+            item.Box));
+
+    private static float IntersectionOverUnion(CvRect first, CvRect second)
+    {
+        var intersection = first & second;
+        if (intersection.Width <= 0 || intersection.Height <= 0)
+        {
+            return 0;
+        }
+
+        var intersectionArea = intersection.Width * intersection.Height;
+        var unionArea = first.Width * first.Height + second.Width * second.Height - intersectionArea;
+        return unionArea <= 0 ? 0 : (float)intersectionArea / unionArea;
+    }
+
     private void UpdateWhitelistSummary() =>
         WhitelistSummaryText.Text = LocalizationManager.Format(
             "WhitelistSummary",
             _whitelistRecognition.GetProfiles().Count);
+
+    private sealed record RecentRecognitionEvent(DateTimeOffset Timestamp, string Label, string State, CvRect Box);
 
     private void ApplySettingsToUi()
     {
@@ -575,6 +640,7 @@ public partial class MainWindow : Window
     {
         ((App)Application.Current).Settings = _settings;
         SettingsStore.Save(_settings);
+        AppLogger.Info("Application settings persisted");
     }
 
     private static string SelectedTag(ComboBox comboBox) =>

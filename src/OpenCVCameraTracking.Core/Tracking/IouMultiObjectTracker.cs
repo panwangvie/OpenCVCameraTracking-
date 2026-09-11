@@ -7,6 +7,8 @@ namespace OpenCVCameraTracking.Core.Tracking;
 /// <summary>
 /// Lightweight tracking-by-detection implementation. It associates detections by
 /// class and intersection-over-union and keeps a stable numeric ID across frames.
+/// A conservative centre-distance fallback preserves an ID when a detector changes
+/// a face box substantially between two adjacent frames.
 /// </summary>
 public sealed class IouMultiObjectTracker
 {
@@ -25,7 +27,7 @@ public sealed class IouMultiObjectTracker
 
     public IReadOnlyList<TrackedObject> Update(IReadOnlyList<ObjectDetection> detections)
     {
-        var candidates = new List<(int Track, int Detection, float Iou)>();
+        var candidates = new List<(int Track, int Detection, float Score)>();
         for (var trackIndex = 0; trackIndex < _tracks.Count; trackIndex++)
         {
             for (var detectionIndex = 0; detectionIndex < detections.Count; detectionIndex++)
@@ -39,13 +41,23 @@ public sealed class IouMultiObjectTracker
                 if (iou >= _minimumIou)
                 {
                     candidates.Add((trackIndex, detectionIndex, iou));
+                    continue;
+                }
+
+                // YuNet's face rectangle can move or resize abruptly for a frame.
+                // Keep the old ID only when the new box remains close and similarly sized.
+                var distanceRatio = CentreDistanceRatio(_tracks[trackIndex].Box, detections[detectionIndex].Box);
+                var areaRatio = AreaRatio(_tracks[trackIndex].Box, detections[detectionIndex].Box);
+                if (distanceRatio <= 0.55f && areaRatio is >= 0.5f and <= 2f)
+                {
+                    candidates.Add((trackIndex, detectionIndex, 0.1f + (0.15f * (1f - distanceRatio))));
                 }
             }
         }
 
         var usedTracks = new HashSet<int>();
         var usedDetections = new HashSet<int>();
-        foreach (var candidate in candidates.OrderByDescending(x => x.Iou))
+        foreach (var candidate in candidates.OrderByDescending(x => x.Score))
         {
             if (!usedTracks.Add(candidate.Track) || !usedDetections.Add(candidate.Detection))
             {
@@ -56,6 +68,7 @@ public sealed class IouMultiObjectTracker
             var track = _tracks[candidate.Track];
             track.Box = Smooth(track.Box, detection.Box);
             track.Confidence = detection.Confidence;
+            track.Landmarks = detection.Landmarks?.ToArray();
             track.Misses = 0;
         }
 
@@ -71,7 +84,12 @@ public sealed class IouMultiObjectTracker
         {
             if (!usedDetections.Contains(index))
             {
-                _tracks.Add(new TrackState(_nextId++, detection.Box, detection.Label, detection.Confidence));
+                _tracks.Add(new TrackState(
+                    _nextId++,
+                    detection.Box,
+                    detection.Label,
+                    detection.Confidence,
+                    detection.Landmarks?.ToArray()));
             }
         }
 
@@ -80,7 +98,13 @@ public sealed class IouMultiObjectTracker
     }
 
     public IReadOnlyList<TrackedObject> Current => _tracks
-        .Select(track => new TrackedObject(track.Id, track.Box, track.Label, track.Confidence))
+        .Select(track => new TrackedObject(
+            track.Id,
+            track.Box,
+            track.Label,
+            track.Confidence,
+            Landmarks: track.Landmarks,
+            Misses: track.Misses))
         .ToArray();
 
     public void Reset()
@@ -112,12 +136,36 @@ public sealed class IouMultiObjectTracker
         return unionArea <= 0 ? 0 : (float)intersectionArea / unionArea;
     }
 
-    private sealed class TrackState(int id, Rect box, string label, float confidence)
+    private static float CentreDistanceRatio(Rect first, Rect second)
+    {
+        var firstCentreX = first.X + (first.Width / 2f);
+        var firstCentreY = first.Y + (first.Height / 2f);
+        var secondCentreX = second.X + (second.Width / 2f);
+        var secondCentreY = second.Y + (second.Height / 2f);
+        var distance = MathF.Sqrt(MathF.Pow(firstCentreX - secondCentreX, 2) + MathF.Pow(firstCentreY - secondCentreY, 2));
+        var referenceSize = Math.Max(1f, (Math.Max(first.Width, first.Height) + Math.Max(second.Width, second.Height)) / 2f);
+        return distance / referenceSize;
+    }
+
+    private static float AreaRatio(Rect first, Rect second)
+    {
+        var firstArea = Math.Max(1, first.Width * first.Height);
+        var secondArea = Math.Max(1, second.Width * second.Height);
+        return (float)secondArea / firstArea;
+    }
+
+    private sealed class TrackState(
+        int id,
+        Rect box,
+        string label,
+        float confidence,
+        IReadOnlyList<Point2f>? landmarks)
     {
         public int Id { get; } = id;
         public Rect Box { get; set; } = box;
         public string Label { get; } = label;
         public float Confidence { get; set; } = confidence;
+        public IReadOnlyList<Point2f>? Landmarks { get; set; } = landmarks;
         public int Misses { get; set; }
     }
 }

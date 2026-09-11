@@ -1,39 +1,49 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using OpenCVCameraTracking.Core.Detection;
+using OpenCVCameraTracking.Core.Logging;
 using OpenCvSharp;
 using OpenCvSharp.Face;
 
 namespace OpenCVCameraTracking.Core.Recognition;
 
 /// <summary>
-/// Local, lightweight whitelist recognition backed by OpenCV LBPH.
-/// Human face boxes are used directly. For cats, the upper portion of the
-/// detected cat box is used as a best-effort face/appearance region.
+/// Local whitelist recognition. Human faces use aligned SFace embeddings and
+/// cosine similarity; cats retain the lightweight LBPH appearance matcher.
+/// Decisions are stabilized with a per-track voting window and asymmetric
+/// enter/exit thresholds, so a marginal frame cannot immediately flip a result.
 /// </summary>
 public sealed class WhitelistRecognitionService : IDisposable
 {
-    private const int NormalizedSize = 128;
+    private const int CatNormalizedSize = 128;
+    private const int VoteWindowSize = 7;
+    private const int KnownEnterVotes = 3;
+    private const int UnknownEnterVotes = 5;
+    private const double FaceExitThresholdOffset = 0.04d;
     private readonly object _gate = new();
     private readonly string _storageDirectory;
     private readonly string _samplesDirectory;
     private readonly string _profilesPath;
-    private readonly double _faceThreshold;
+    private readonly double _faceSimilarityThreshold;
     private readonly double _catThreshold;
     private readonly JsonSerializerOptions _jsonOptions = new()
     {
         WriteIndented = true,
         Converters = { new JsonStringEnumConverter() }
     };
+    private readonly SFaceEmbeddingExtractor? _faceEmbeddingExtractor;
+    private readonly List<FaceTemplate> _faceTemplates = [];
+    private readonly Dictionary<int, Queue<RecognitionVote>> _trackVotes = [];
+    private readonly Dictionary<int, StableRecognitionState> _stableTrackStates = [];
 
     private List<StoredProfile> _profiles;
-    private LBPHFaceRecognizer? _faceRecognizer;
     private LBPHFaceRecognizer? _catRecognizer;
     private bool _disposed;
 
     public WhitelistRecognitionService(
         string? storageDirectory = null,
-        double faceThreshold = 62d,
+        string? faceRecognitionModelPath = null,
+        double faceSimilarityThreshold = 0.363d,
         double catThreshold = 52d)
     {
         _storageDirectory = storageDirectory ?? Path.Combine(
@@ -42,12 +52,23 @@ public sealed class WhitelistRecognitionService : IDisposable
             "Whitelist");
         _samplesDirectory = Path.Combine(_storageDirectory, "samples");
         _profilesPath = Path.Combine(_storageDirectory, "profiles.json");
-        _faceThreshold = faceThreshold;
+        _faceSimilarityThreshold = faceSimilarityThreshold;
         _catThreshold = catThreshold;
+
+        var modelPath = faceRecognitionModelPath ?? Path.Combine(
+            AppContext.BaseDirectory,
+            "Assets",
+            "Models",
+            "face_recognition_sface_2021dec.onnx");
+        if (File.Exists(modelPath))
+        {
+            _faceEmbeddingExtractor = new SFaceEmbeddingExtractor(modelPath);
+        }
 
         Directory.CreateDirectory(_samplesDirectory);
         _profiles = LoadProfiles();
         RebuildModels();
+        AppLogger.Info($"Whitelist service initialized: profiles={_profiles.Count}, faceTemplates={_faceTemplates.Count}");
     }
 
     public string StorageDirectory => _storageDirectory;
@@ -85,13 +106,18 @@ public sealed class WhitelistRecognitionService : IDisposable
         }
     }
 
-    public IReadOnlyList<TrackedObject> Recognize(
-        Mat bgrFrame,
-        IReadOnlyList<TrackedObject> objects)
+    public IReadOnlyList<TrackedObject> Recognize(Mat bgrFrame, IReadOnlyList<TrackedObject> objects)
     {
         lock (_gate)
         {
             ThrowIfDisposed();
+            var activeTrackIds = objects.Select(item => item.Id).ToHashSet();
+            foreach (var inactiveTrackId in _trackVotes.Keys.Where(id => !activeTrackIds.Contains(id)).ToArray())
+            {
+                _trackVotes.Remove(inactiveTrackId);
+                _stableTrackStates.Remove(inactiveTrackId);
+            }
+
             var results = new TrackedObject[objects.Count];
             for (var index = 0; index < objects.Count; index++)
             {
@@ -102,45 +128,36 @@ public sealed class WhitelistRecognitionService : IDisposable
                     continue;
                 }
 
-                var recognizer = kind == WhitelistSubjectKind.Face
-                    ? _faceRecognizer
-                    : _catRecognizer;
-                if (recognizer is null)
+                // With no enrolled profile there is no basis for an "unknown"
+                // decision. Keep the target pending instead of alarming the user.
+                if (!_profiles.Any(profile => profile.Kind == kind))
                 {
                     results[index] = item with
                     {
                         IdentityName = null,
-                        IsKnown = false,
-                        RecognitionDistance = null
+                        IsKnown = null,
+                        RecognitionDistance = null,
+                        RecognitionSimilarity = null
                     };
                     continue;
                 }
 
-                using var sample = PrepareSample(bgrFrame, item.Box, kind);
-                if (sample is null)
-                {
-                    results[index] = item;
-                    continue;
-                }
-
-                recognizer.Predict(sample, out var numericId, out var distance);
-                var threshold = kind == WhitelistSubjectKind.Face
-                    ? _faceThreshold
-                    : _catThreshold;
-                var profile = distance <= threshold
-                    ? _profiles.FirstOrDefault(candidate =>
-                        candidate.NumericId == numericId && candidate.Kind == kind)
-                    : null;
-
-                results[index] = item with
-                {
-                    IdentityName = profile?.Name,
-                    IsKnown = profile is not null,
-                    RecognitionDistance = distance
-                };
+                var observation = kind == WhitelistSubjectKind.Face
+                    ? RecognizeFace(bgrFrame, item)
+                    : RecognizeCat(bgrFrame, item);
+                results[index] = Stabilize(item, observation);
             }
 
             return results;
+        }
+    }
+
+    public void ResetTracking()
+    {
+        lock (_gate)
+        {
+            _trackVotes.Clear();
+            _stableTrackStates.Clear();
         }
     }
 
@@ -148,12 +165,20 @@ public sealed class WhitelistRecognitionService : IDisposable
         Mat bgrFrame,
         TrackedObject target,
         string name,
-        WhitelistSubjectKind kind)
-        => Enroll(bgrFrame, target.Box, name, kind);
+        WhitelistSubjectKind kind) =>
+        EnrollCore(bgrFrame, target.Box, target.Landmarks, name, kind);
 
     public WhitelistEnrollmentResult Enroll(
         Mat bgrFrame,
         Rect region,
+        string name,
+        WhitelistSubjectKind kind) =>
+        EnrollCore(bgrFrame, region, null, name, kind);
+
+    private WhitelistEnrollmentResult EnrollCore(
+        Mat bgrFrame,
+        Rect region,
+        IReadOnlyList<Point2f>? landmarks,
         string name,
         WhitelistSubjectKind kind)
     {
@@ -166,8 +191,8 @@ public sealed class WhitelistRecognitionService : IDisposable
         lock (_gate)
         {
             ThrowIfDisposed();
-            using var sample = PrepareSample(bgrFrame, region, kind);
-            if (sample is null)
+            using var sample = PrepareEnrollmentSample(bgrFrame, region, landmarks, kind);
+            if (sample is null || sample.Empty())
             {
                 return new WhitelistEnrollmentResult(WhitelistEnrollmentStatus.NoMatchingTarget);
             }
@@ -194,6 +219,7 @@ public sealed class WhitelistRecognitionService : IDisposable
             Cv2.ImWrite(samplePath, sample);
             SaveProfiles();
             RebuildModels();
+            AppLogger.Info($"Whitelist enrollment succeeded: kind={kind}, profile={profile.Name}, samples={ToPublicProfile(profile).SampleCount}");
             return new WhitelistEnrollmentResult(
                 WhitelistEnrollmentStatus.Success,
                 ToPublicProfile(profile));
@@ -211,34 +237,240 @@ public sealed class WhitelistRecognitionService : IDisposable
                 return false;
             }
 
-            _profiles.Remove(profile);
             var profileDirectory = GetProfileDirectory(profile.Id);
             if (Directory.Exists(profileDirectory))
             {
-                Directory.Delete(profileDirectory, recursive: true);
+                DeleteDirectoryWithRetry(profileDirectory);
             }
 
+            _profiles.Remove(profile);
             SaveProfiles();
             RebuildModels();
+            AppLogger.Info($"Whitelist profile deleted: kind={profile.Kind}, profile={profile.Name}");
             return true;
         }
     }
 
-    private void RebuildModels()
+    private static void DeleteDirectoryWithRetry(string directory)
     {
-        _faceRecognizer?.Dispose();
-        _catRecognizer?.Dispose();
-        _faceRecognizer = BuildModel(WhitelistSubjectKind.Face);
-        _catRecognizer = BuildModel(WhitelistSubjectKind.Cat);
+        const int maximumAttempts = 5;
+        IOException? lastException = null;
+        for (var attempt = 1; attempt <= maximumAttempts; attempt++)
+        {
+            try
+            {
+                Directory.Delete(directory, recursive: true);
+                return;
+            }
+            catch (DirectoryNotFoundException)
+            {
+                return;
+            }
+            catch (IOException exception) when (attempt < maximumAttempts)
+            {
+                lastException = exception;
+                Thread.Sleep(TimeSpan.FromMilliseconds(120 * attempt));
+            }
+        }
+
+        throw lastException ?? new IOException($"Unable to delete whitelist directory '{directory}'.");
     }
 
-    private LBPHFaceRecognizer? BuildModel(WhitelistSubjectKind kind)
+    private RecognitionObservation RecognizeFace(Mat frame, TrackedObject item)
+    {
+        if (_faceEmbeddingExtractor is null)
+        {
+            return new RecognitionObservation(null, false, null, null);
+        }
+
+        using var aligned = _faceEmbeddingExtractor.AlignFace(frame, item.Box, item.Landmarks);
+        var embedding = _faceEmbeddingExtractor.Extract(aligned);
+        if (embedding.Length == 0)
+        {
+            return new RecognitionObservation(null, false, null, null);
+        }
+
+        FaceTemplate? bestTemplate = null;
+        var bestSimilarity = -1d;
+        foreach (var template in _faceTemplates)
+        {
+            var similarity = SFaceEmbeddingExtractor.CosineSimilarity(embedding, template.Embedding);
+            if (similarity > bestSimilarity)
+            {
+                bestSimilarity = similarity;
+                bestTemplate = template;
+            }
+        }
+
+        var displaySimilarity = Math.Clamp(bestSimilarity, 0d, 1d);
+        // Keep the best candidate even below the entry threshold. Stabilize can then
+        // apply a lower exit threshold for an already-recognised, same identity.
+        return new RecognitionObservation(
+            bestTemplate?.Profile,
+            bestTemplate is not null && bestSimilarity >= _faceSimilarityThreshold,
+            displaySimilarity,
+            null);
+    }
+
+    private RecognitionObservation RecognizeCat(Mat frame, TrackedObject item)
+    {
+        if (_catRecognizer is null)
+        {
+            return new RecognitionObservation(null, false, null, null);
+        }
+
+        using var sample = PrepareCatSample(frame, item.Box);
+        if (sample is null)
+        {
+            return new RecognitionObservation(null, false, null, null);
+        }
+
+        _catRecognizer.Predict(sample, out var numericId, out var distance);
+        var profile = distance <= _catThreshold
+            ? _profiles.FirstOrDefault(candidate =>
+                candidate.NumericId == numericId && candidate.Kind == WhitelistSubjectKind.Cat)
+            : null;
+        return new RecognitionObservation(profile, profile is not null, null, distance);
+    }
+
+    private TrackedObject Stabilize(TrackedObject item, RecognitionObservation observation)
+    {
+        // Tracks retained briefly after a missed detection contain an old rectangle.
+        // Do not run recognition or emit a new state from that stale image region.
+        if (item.Misses > 0)
+        {
+            return item with { IdentityName = null, IsKnown = null };
+        }
+
+        if (!_trackVotes.TryGetValue(item.Id, out var votes))
+        {
+            votes = new Queue<RecognitionVote>();
+            _trackVotes[item.Id] = votes;
+        }
+
+        var isMatch = observation.IsMatch;
+        if (_stableTrackStates.TryGetValue(item.Id, out var previousStable) &&
+            previousStable.IsKnown &&
+            string.Equals(previousStable.ProfileId, observation.Profile?.Id, StringComparison.Ordinal) &&
+            observation.Similarity is { } similarity &&
+            similarity >= Math.Max(0d, _faceSimilarityThreshold - FaceExitThresholdOffset))
+        {
+            isMatch = true;
+        }
+
+        votes.Enqueue(new RecognitionVote(
+            observation.Profile?.Id,
+            observation.Profile?.Name,
+            isMatch,
+            observation.Similarity,
+            observation.Distance));
+        while (votes.Count > VoteWindowSize)
+        {
+            votes.Dequeue();
+        }
+
+        var knownGroup = votes
+            .Where(vote => vote.IsMatch && vote.ProfileId is not null)
+            .GroupBy(vote => vote.ProfileId)
+            .Select(group => new { Votes = group.ToArray(), Count = group.Count() })
+            .OrderByDescending(group => group.Count)
+            .FirstOrDefault();
+        if (knownGroup is { Count: >= KnownEnterVotes })
+        {
+            var latest = knownGroup.Votes[^1];
+            var stable = new StableRecognitionState(true, latest.ProfileId, latest.ProfileName);
+            _stableTrackStates[item.Id] = stable;
+            return ApplyStableState(item, stable, knownGroup.Votes);
+        }
+
+        var unknownVotes = votes.Where(vote => !vote.IsMatch).ToArray();
+        if (unknownVotes.Length >= UnknownEnterVotes)
+        {
+            var stable = new StableRecognitionState(false, null, null);
+            _stableTrackStates[item.Id] = stable;
+            return ApplyStableState(item, stable, unknownVotes);
+        }
+
+        // Hysteresis: retain a previously confirmed decision while evidence is
+        // inconclusive. A new decision must meet its own entry vote threshold.
+        if (_stableTrackStates.TryGetValue(item.Id, out var stableState))
+        {
+            return ApplyStableState(item, stableState, votes);
+        }
+
+        return item with
+        {
+            IdentityName = null,
+            IsKnown = null,
+            RecognitionSimilarity = observation.Similarity,
+            RecognitionDistance = observation.Distance
+        };
+    }
+
+    private static TrackedObject ApplyStableState(
+        TrackedObject item,
+        StableRecognitionState stable,
+        IEnumerable<RecognitionVote> evidence)
+    {
+        var evidenceArray = evidence.ToArray();
+        return item with
+        {
+            IdentityName = stable.ProfileName,
+            IsKnown = stable.IsKnown,
+            RecognitionSimilarity = AverageNullable(evidenceArray.Select(vote => vote.Similarity)),
+            RecognitionDistance = AverageNullable(evidenceArray.Select(vote => vote.Distance))
+        };
+    }
+
+    private void RebuildModels()
+    {
+        _faceTemplates.Clear();
+        BuildFaceTemplates();
+        _catRecognizer?.Dispose();
+        _catRecognizer = BuildCatModel();
+        _trackVotes.Clear();
+        _stableTrackStates.Clear();
+    }
+
+    private void BuildFaceTemplates()
+    {
+        if (_faceEmbeddingExtractor is null)
+        {
+            return;
+        }
+
+        foreach (var profile in _profiles.Where(item => item.Kind == WhitelistSubjectKind.Face))
+        {
+            var directory = GetProfileDirectory(profile.Id);
+            if (!Directory.Exists(directory))
+            {
+                continue;
+            }
+
+            foreach (var path in Directory.EnumerateFiles(directory, "*.png"))
+            {
+                using var image = Cv2.ImRead(path, ImreadModes.Color);
+                if (image.Empty())
+                {
+                    continue;
+                }
+
+                var embedding = _faceEmbeddingExtractor.Extract(image);
+                if (embedding.Length > 0)
+                {
+                    _faceTemplates.Add(new FaceTemplate(profile, embedding));
+                }
+            }
+        }
+    }
+
+    private LBPHFaceRecognizer? BuildCatModel()
     {
         var images = new List<Mat>();
         var labels = new List<int>();
         try
         {
-            foreach (var profile in _profiles.Where(item => item.Kind == kind))
+            foreach (var profile in _profiles.Where(item => item.Kind == WhitelistSubjectKind.Cat))
             {
                 var directory = GetProfileDirectory(profile.Id);
                 if (!Directory.Exists(directory))
@@ -278,7 +510,33 @@ public sealed class WhitelistRecognitionService : IDisposable
         }
     }
 
-    private static Mat? PrepareSample(Mat frame, Rect detectedBox, WhitelistSubjectKind kind)
+    private Mat? PrepareEnrollmentSample(
+        Mat frame,
+        Rect region,
+        IReadOnlyList<Point2f>? landmarks,
+        WhitelistSubjectKind kind)
+    {
+        if (kind == WhitelistSubjectKind.Face)
+        {
+            if (_faceEmbeddingExtractor is null)
+            {
+                return null;
+            }
+
+            var aligned = _faceEmbeddingExtractor.AlignFace(frame, region, landmarks);
+            if (aligned.Empty())
+            {
+                aligned.Dispose();
+                return null;
+            }
+
+            return aligned;
+        }
+
+        return PrepareCatSample(frame, region);
+    }
+
+    private static Mat? PrepareCatSample(Mat frame, Rect detectedBox)
     {
         var frameBounds = new Rect(0, 0, frame.Width, frame.Height);
         var box = detectedBox & frameBounds;
@@ -287,15 +545,12 @@ public sealed class WhitelistRecognitionService : IDisposable
             return null;
         }
 
-        if (kind == WhitelistSubjectKind.Cat)
-        {
-            var insetX = (int)MathF.Round(box.Width * 0.08f);
-            box = new Rect(
-                box.X + insetX,
-                box.Y,
-                Math.Max(1, box.Width - insetX * 2),
-                Math.Max(1, (int)MathF.Round(box.Height * 0.62f))) & frameBounds;
-        }
+        var insetX = (int)MathF.Round(box.Width * 0.08f);
+        box = new Rect(
+            box.X + insetX,
+            box.Y,
+            Math.Max(1, box.Width - insetX * 2),
+            Math.Max(1, (int)MathF.Round(box.Height * 0.62f))) & frameBounds;
 
         using var roi = new Mat(frame, box);
         using var gray = new Mat();
@@ -305,11 +560,7 @@ public sealed class WhitelistRecognitionService : IDisposable
         Cv2.CvtColor(roi, gray, conversion);
 
         var normalized = new Mat();
-        Cv2.Resize(
-            gray,
-            normalized,
-            new Size(NormalizedSize, NormalizedSize),
-            interpolation: InterpolationFlags.Area);
+        Cv2.Resize(gray, normalized, new Size(CatNormalizedSize, CatNormalizedSize), interpolation: InterpolationFlags.Area);
         Cv2.EqualizeHist(normalized, normalized);
         return normalized;
     }
@@ -367,9 +618,7 @@ public sealed class WhitelistRecognitionService : IDisposable
     {
         Directory.CreateDirectory(_storageDirectory);
         var temporaryPath = _profilesPath + ".tmp";
-        File.WriteAllText(
-            temporaryPath,
-            JsonSerializer.Serialize(_profiles, _jsonOptions));
+        File.WriteAllText(temporaryPath, JsonSerializer.Serialize(_profiles, _jsonOptions));
         File.Move(temporaryPath, _profilesPath, overwrite: true);
     }
 
@@ -388,11 +637,15 @@ public sealed class WhitelistRecognitionService : IDisposable
             sampleCount);
     }
 
-    private string GetProfileDirectory(string profileId) =>
-        Path.Combine(_samplesDirectory, profileId);
+    private string GetProfileDirectory(string profileId) => Path.Combine(_samplesDirectory, profileId);
 
-    private void ThrowIfDisposed() =>
-        ObjectDisposedException.ThrowIf(_disposed, this);
+    private static double? AverageNullable(IEnumerable<double?> values)
+    {
+        var available = values.Where(value => value.HasValue).Select(value => value!.Value).ToArray();
+        return available.Length == 0 ? null : available.Average();
+    }
+
+    private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, this);
 
     public void Dispose()
     {
@@ -403,7 +656,7 @@ public sealed class WhitelistRecognitionService : IDisposable
                 return;
             }
 
-            _faceRecognizer?.Dispose();
+            _faceEmbeddingExtractor?.Dispose();
             _catRecognizer?.Dispose();
             _disposed = true;
         }
@@ -419,4 +672,9 @@ public sealed class WhitelistRecognitionService : IDisposable
         public WhitelistSubjectKind Kind { get; set; }
         public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.Now;
     }
+
+    private sealed record FaceTemplate(StoredProfile Profile, float[] Embedding);
+    private sealed record RecognitionObservation(StoredProfile? Profile, bool IsMatch, double? Similarity, double? Distance);
+    private sealed record RecognitionVote(string? ProfileId, string? ProfileName, bool IsMatch, double? Similarity, double? Distance);
+    private sealed record StableRecognitionState(bool IsKnown, string? ProfileId, string? ProfileName);
 }

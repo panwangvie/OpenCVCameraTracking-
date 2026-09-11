@@ -1,5 +1,6 @@
 using OpenCvSharp;
 using OpenCvSharp.Dnn;
+using OpenCVCameraTracking.Core.Logging;
 
 namespace OpenCVCameraTracking.Core.Detection;
 
@@ -39,6 +40,7 @@ public sealed class YuNetFaceDetector : IObjectDetector
             Backend.OPENCV,
             Target.CPU)
             ?? throw new InvalidOperationException($"Unable to load YuNet face model: {modelFile}");
+        AppLogger.Info($"YuNet detector loaded: input={inputWidth}x{inputHeight}, confidence={confidenceThreshold:0.00}");
     }
 
     public IReadOnlyList<Detection> Detect(Mat bgrFrame)
@@ -59,6 +61,13 @@ public sealed class YuNetFaceDetector : IObjectDetector
             var width = faces.At<float>(row, 2) / scale;
             var height = faces.At<float>(row, 3) / scale;
             var confidence = faces.At<float>(row, 14);
+            var landmarks = new Point2f[5];
+            for (var pointIndex = 0; pointIndex < landmarks.Length; pointIndex++)
+            {
+                landmarks[pointIndex] = new Point2f(
+                    faces.At<float>(row, pointIndex * 2 + 4) / scale,
+                    faces.At<float>(row, pointIndex * 2 + 5) / scale);
+            }
 
             var left = Math.Clamp((int)MathF.Round(x), 0, bgrFrame.Width - 1);
             var top = Math.Clamp((int)MathF.Round(y), 0, bgrFrame.Height - 1);
@@ -67,7 +76,8 @@ public sealed class YuNetFaceDetector : IObjectDetector
             detections.Add(new Detection(
                 new Rect(left, top, right - left, bottom - top),
                 _label,
-                confidence));
+                confidence,
+                Landmarks: landmarks));
         }
 
         return detections;
