@@ -15,7 +15,8 @@ public sealed class FrameReadyEventArgs(
     int height,
     int stride,
     IReadOnlyList<TrackedObject> objects,
-    double framesPerSecond) : EventArgs
+    double framesPerSecond,
+    double sourceLatencyMilliseconds) : EventArgs
 {
     public byte[] Pixels { get; } = pixels;
     public int Width { get; } = width;
@@ -23,7 +24,31 @@ public sealed class FrameReadyEventArgs(
     public int Stride { get; } = stride;
     public IReadOnlyList<TrackedObject> Objects { get; } = objects;
     public double FramesPerSecond { get; } = framesPerSecond;
+    public double SourceLatencyMilliseconds { get; } = sourceLatencyMilliseconds;
 }
+
+public sealed class VideoSourceStatusEventArgs(
+    string status,
+    string? detail,
+    int reconnectAttempt,
+    int width,
+    int height) : EventArgs
+{
+    public string Status { get; } = status;
+    public string? Detail { get; } = detail;
+    public int ReconnectAttempt { get; } = reconnectAttempt;
+    public int Width { get; } = width;
+    public int Height { get; } = height;
+}
+
+public sealed record VideoSourceDiagnosticResult(
+    bool Success,
+    string Status,
+    string? Detail,
+    TimeSpan OpenDuration,
+    int Width,
+    int Height,
+    VideoCaptureBackend Backend);
 
 public sealed class CameraTrackingEngine : IAsyncDisposable
 {
@@ -62,9 +87,72 @@ public sealed class CameraTrackingEngine : IAsyncDisposable
 
     public event EventHandler<FrameReadyEventArgs>? FrameReady;
     public event EventHandler<string>? StatusChanged;
+    public event EventHandler<VideoSourceStatusEventArgs>? SourceStatusChanged;
     public event EventHandler<Exception>? Faulted;
 
     public bool IsRunning => _worker is { IsCompleted: false };
+
+    /// <summary>
+    /// Opens a source and reads one frame without starting tracking. This is used by
+    /// the settings/diagnostics UI so connectivity tests never block the WPF thread.
+    /// </summary>
+    public Task<VideoSourceDiagnosticResult> DiagnoseAsync(
+        CameraSourceOptions options,
+        CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        Validate(options);
+        return Task.Run(() => Diagnose(options, cancellationToken), cancellationToken);
+    }
+
+    private static VideoSourceDiagnosticResult Diagnose(
+        CameraSourceOptions options,
+        CancellationToken cancellationToken)
+    {
+        var started = Stopwatch.StartNew();
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            using var capture = OpenCapture(options);
+            cancellationToken.ThrowIfCancellationRequested();
+            using var frame = new Mat();
+            if (!capture.Read(frame) || frame.Empty())
+            {
+                return new VideoSourceDiagnosticResult(
+                    false,
+                    "ReadFailed",
+                    "The source opened but did not return a frame.",
+                    started.Elapsed,
+                    0,
+                    0,
+                    ResolveBackend(options));
+            }
+
+            return new VideoSourceDiagnosticResult(
+                true,
+                "Ok",
+                null,
+                started.Elapsed,
+                frame.Width,
+                frame.Height,
+                ResolveBackend(options));
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            return new VideoSourceDiagnosticResult(
+                false,
+                "OpenFailed",
+                exception.Message,
+                started.Elapsed,
+                0,
+                0,
+                ResolveBackend(options));
+        }
+    }
 
     public Task StartAsync(CameraSourceOptions options, CancellationToken cancellationToken = default)
     {
@@ -79,9 +167,17 @@ public sealed class CameraTrackingEngine : IAsyncDisposable
         _tracker.Reset();
         _whitelistRecognition?.ResetTracking();
         ClearLatestSnapshot();
-        _cancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        _worker = Task.Run(() => CaptureLoop(options, _cancellation.Token), CancellationToken.None);
+        var captureCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        _cancellation = captureCancellation;
+        _worker = Task.Run(() => CaptureLoopAsync(options, captureCancellation.Token), CancellationToken.None);
         return Task.CompletedTask;
+    }
+
+    /// <summary>Stops the current capture and starts it again using the same source options.</summary>
+    public async Task ReconnectAsync(CameraSourceOptions options, CancellationToken cancellationToken = default)
+    {
+        await StopAsync().ConfigureAwait(false);
+        await StartAsync(options, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task StopAsync()
@@ -111,7 +207,7 @@ public sealed class CameraTrackingEngine : IAsyncDisposable
         }
     }
 
-    public WhitelistEnrollmentResult EnrollCurrentTarget(
+    public async Task<WhitelistEnrollmentResult> EnrollCurrentTargetAsync(
         string name,
         WhitelistSubjectKind kind)
     {
@@ -146,11 +242,11 @@ public sealed class CameraTrackingEngine : IAsyncDisposable
                 return new WhitelistEnrollmentResult(WhitelistEnrollmentStatus.NoMatchingTarget);
             }
 
-            return _whitelistRecognition.Enroll(frame, target, name, kind);
+            return await _whitelistRecognition.EnrollAsync(frame, target, name, kind).ConfigureAwait(false);
         }
     }
 
-    public WhitelistEnrollmentResult EnrollCurrentRegion(
+    public async Task<WhitelistEnrollmentResult> EnrollCurrentRegionAsync(
         Rect region,
         string name,
         WhitelistSubjectKind kind)
@@ -187,21 +283,21 @@ public sealed class CameraTrackingEngine : IAsyncDisposable
                     .FirstOrDefault();
                 if (target is not null)
                 {
-                    return _whitelistRecognition.Enroll(frame, target, name, kind);
+                    return await _whitelistRecognition.EnrollAsync(frame, target, name, kind).ConfigureAwait(false);
                 }
             }
 
-            return _whitelistRecognition.Enroll(frame, region, name, kind);
+            return await _whitelistRecognition.EnrollAsync(frame, region, name, kind).ConfigureAwait(false);
         }
     }
 
-    private void CaptureLoop(CameraSourceOptions options, CancellationToken cancellationToken)
+    private async Task CaptureLoopAsync(CameraSourceOptions options, CancellationToken cancellationToken)
     {
         try
         {
             if (options.Kind == CameraSourceKind.Stream && options.LowLatencyMode)
             {
-                LowLatencyStreamLoop(options, cancellationToken);
+                await LowLatencyStreamLoopAsync(options, cancellationToken).ConfigureAwait(false);
             }
             else
             {
@@ -222,12 +318,14 @@ public sealed class CameraTrackingEngine : IAsyncDisposable
         var measuredFps = 0d;
         var fpsTimer = Stopwatch.StartNew();
         using var frame = new Mat();
+        var reconnectAttempt = 0;
 
         while (!cancellationToken.IsCancellationRequested)
         {
-            using var capture = OpenCapture(options);
-            StatusChanged?.Invoke(this, "Connected");
-            AppLogger.Info($"Capture connected: source={options.Kind}");
+            using var capture = OpenCaptureWithRetry(options, cancellationToken);
+            reconnectAttempt = 0;
+            RaiseSourceStatus("Connected", null, 0, capture);
+            AppLogger.Info($"Capture connected: source={options.Kind}, backend={options.PreferredBackend}");
             var consecutiveFailures = 0;
 
             while (!cancellationToken.IsCancellationRequested)
@@ -236,32 +334,36 @@ public sealed class CameraTrackingEngine : IAsyncDisposable
                 {
                     if (++consecutiveFailures < 8)
                     {
-                        Thread.Sleep(30);
+                        WaitForReconnect(cancellationToken, 30);
                         continue;
                     }
 
                     if (options.Kind == CameraSourceKind.File)
                     {
-                        StatusChanged?.Invoke(this, "FileEnded");
+                        RaiseSourceStatus("FileEnded", "The video file has no more frames.", 0, capture);
                         return;
                     }
 
-                    StatusChanged?.Invoke(this, "Reconnecting");
+                    RaiseSourceStatus(
+                        "Reconnecting",
+                        "The video source stopped returning frames.",
+                        ++reconnectAttempt,
+                        capture);
                     break;
                 }
 
                 consecutiveFailures = 0;
-                ProcessFrame(frame, ref frameNumber, ref frameCounter, ref measuredFps, fpsTimer);
+                ProcessFrame(frame, ref frameNumber, ref frameCounter, ref measuredFps, fpsTimer, DateTimeOffset.UtcNow);
             }
 
             if (!cancellationToken.IsCancellationRequested)
             {
-                cancellationToken.WaitHandle.WaitOne(TimeSpan.FromSeconds(1));
+                WaitForReconnect(cancellationToken, GetReconnectDelay(options, reconnectAttempt));
             }
         }
     }
 
-    private void LowLatencyStreamLoop(CameraSourceOptions options, CancellationToken cancellationToken)
+    private async Task LowLatencyStreamLoopAsync(CameraSourceOptions options, CancellationToken cancellationToken)
     {
         using var localCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         using var frameBuffer = new LatestFrameBuffer();
@@ -277,25 +379,32 @@ public sealed class CameraTrackingEngine : IAsyncDisposable
         {
             while (!cancellationToken.IsCancellationRequested)
             {
-                using var frame = frameBuffer.Take(cancellationToken);
-                if (frame is null)
+                using var packet = frameBuffer.Take(cancellationToken);
+                if (packet is null)
                 {
                     break;
                 }
 
-                ProcessFrame(frame, ref frameNumber, ref frameCounter, ref measuredFps, fpsTimer);
+                ProcessFrame(packet.Frame, ref frameNumber, ref frameCounter, ref measuredFps, fpsTimer, packet.CapturedAt);
             }
         }
         finally
         {
             localCancellation.Cancel();
-            try
-            {
-                reader.GetAwaiter().GetResult();
-            }
-            catch (OperationCanceledException)
-            {
-            }
+            frameBuffer.Complete();
+            await ObserveReaderCompletionAsync(reader).ConfigureAwait(false);
+        }
+    }
+
+    private static async Task ObserveReaderCompletionAsync(Task reader)
+    {
+        try
+        {
+            await reader.ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // Cancellation is the expected result of a user-initiated stop.
         }
     }
 
@@ -307,11 +416,13 @@ public sealed class CameraTrackingEngine : IAsyncDisposable
         try
         {
             using var frame = new Mat();
+            var reconnectAttempt = 0;
             while (!cancellationToken.IsCancellationRequested)
             {
-                using var capture = OpenCapture(options);
-                StatusChanged?.Invoke(this, "Connected");
-                AppLogger.Info("Low-latency capture connected");
+                using var capture = OpenCaptureWithRetry(options, cancellationToken);
+                reconnectAttempt = 0;
+                RaiseSourceStatus("Connected", null, reconnectAttempt, capture);
+                AppLogger.Info($"Low-latency capture connected: backend={options.PreferredBackend}");
                 var consecutiveFailures = 0;
                 while (!cancellationToken.IsCancellationRequested)
                 {
@@ -319,21 +430,25 @@ public sealed class CameraTrackingEngine : IAsyncDisposable
                     {
                         if (++consecutiveFailures < 8)
                         {
-                            Thread.Sleep(15);
+                            WaitForReconnect(cancellationToken, 15);
                             continue;
                         }
 
-                        StatusChanged?.Invoke(this, "Reconnecting");
+                        RaiseSourceStatus(
+                            "Reconnecting",
+                            "The video stream stopped returning frames.",
+                            ++reconnectAttempt,
+                            capture);
                         break;
                     }
 
                     consecutiveFailures = 0;
-                    frameBuffer.Publish(frame);
+                    frameBuffer.Publish(frame, DateTimeOffset.UtcNow);
                 }
 
                 if (!cancellationToken.IsCancellationRequested)
                 {
-                    cancellationToken.WaitHandle.WaitOne(TimeSpan.FromMilliseconds(500));
+                    WaitForReconnect(cancellationToken, GetReconnectDelay(options, reconnectAttempt));
                 }
             }
 
@@ -350,7 +465,8 @@ public sealed class CameraTrackingEngine : IAsyncDisposable
         ref long frameNumber,
         ref int frameCounter,
         ref double measuredFps,
-        Stopwatch fpsTimer)
+        Stopwatch fpsTimer,
+        DateTimeOffset capturedAt)
     {
         frameNumber++;
         frameCounter++;
@@ -372,7 +488,36 @@ public sealed class CameraTrackingEngine : IAsyncDisposable
             fpsTimer.Restart();
         }
 
-        RaiseFrame(frame, objects, measuredFps);
+        RaiseFrame(frame, objects, measuredFps, capturedAt);
+    }
+
+    private VideoCapture OpenCaptureWithRetry(
+        CameraSourceOptions options,
+        CancellationToken cancellationToken)
+    {
+        var attempt = 0;
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            try
+            {
+                return OpenCapture(options);
+            }
+            catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
+            {
+                attempt++;
+                if (options.Kind == CameraSourceKind.File)
+                {
+                    throw;
+                }
+
+                RaiseSourceStatus("Reconnecting", exception.Message, attempt, null);
+                AppLogger.Warn($"Unable to open video source; retry attempt={attempt}, source={options.Kind}: {exception.Message}");
+                WaitForReconnect(cancellationToken, GetReconnectDelay(options, attempt));
+            }
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        throw new InvalidOperationException("Video source opening was cancelled.");
     }
 
     private static VideoCapture OpenCapture(CameraSourceOptions options)
@@ -380,22 +525,24 @@ public sealed class CameraTrackingEngine : IAsyncDisposable
         VideoCapture capture;
         if (options.Kind == CameraSourceKind.Device)
         {
-            capture = new VideoCapture(options.DeviceIndex, VideoCaptureAPIs.DSHOW);
-            if (!capture.IsOpened())
+            capture = options.PreferredBackend switch
             {
-                capture.Dispose();
-                capture = new VideoCapture(options.DeviceIndex, VideoCaptureAPIs.MSMF);
-            }
+                VideoCaptureBackend.DirectShow => new VideoCapture(options.DeviceIndex, VideoCaptureAPIs.DSHOW),
+                VideoCaptureBackend.MediaFoundation => new VideoCapture(options.DeviceIndex, VideoCaptureAPIs.MSMF),
+                _ => OpenDeviceWithFallback(options.DeviceIndex)
+            };
         }
         else
         {
-            var address = options.Address!;
-            capture = OpenFfmpeg(address, options);
-            if (!capture.IsOpened())
+            var address = options.UseSubStream && !string.IsNullOrWhiteSpace(options.SubAddress)
+                ? options.SubAddress!
+                : options.Address!;
+            capture = options.PreferredBackend switch
             {
-                capture.Dispose();
-                capture = new VideoCapture(address, VideoCaptureAPIs.ANY);
-            }
+                VideoCaptureBackend.Ffmpeg => OpenFfmpeg(address, options),
+                VideoCaptureBackend.MediaFoundation => new VideoCapture(address, VideoCaptureAPIs.MSMF),
+                _ => OpenStreamWithFallback(address, options)
+            };
         }
 
         if (!capture.IsOpened())
@@ -419,6 +566,42 @@ public sealed class CameraTrackingEngine : IAsyncDisposable
         }
 
         return capture;
+    }
+
+    private static VideoCapture OpenDeviceWithFallback(int deviceIndex)
+    {
+        var capture = new VideoCapture(deviceIndex, VideoCaptureAPIs.DSHOW);
+        if (capture.IsOpened())
+        {
+            return capture;
+        }
+
+        capture.Dispose();
+        return new VideoCapture(deviceIndex, VideoCaptureAPIs.MSMF);
+    }
+
+    private static VideoCapture OpenStreamWithFallback(string address, CameraSourceOptions options)
+    {
+        var capture = OpenFfmpeg(address, options);
+        if (capture.IsOpened())
+        {
+            return capture;
+        }
+
+        capture.Dispose();
+        return new VideoCapture(address, VideoCaptureAPIs.ANY);
+    }
+
+    private static VideoCaptureBackend ResolveBackend(CameraSourceOptions options)
+    {
+        if (options.PreferredBackend != VideoCaptureBackend.Auto)
+        {
+            return options.PreferredBackend;
+        }
+
+        return options.Kind == CameraSourceKind.Device
+            ? VideoCaptureBackend.DirectShow
+            : VideoCaptureBackend.Ffmpeg;
     }
 
     private static VideoCapture OpenFfmpeg(string address, CameraSourceOptions options)
@@ -518,7 +701,11 @@ public sealed class CameraTrackingEngine : IAsyncDisposable
         return new Scalar(pixel.Item0, pixel.Item1, pixel.Item2);
     }
 
-    private void RaiseFrame(Mat bgrFrame, IReadOnlyList<TrackedObject> objects, double framesPerSecond)
+    private void RaiseFrame(
+        Mat bgrFrame,
+        IReadOnlyList<TrackedObject> objects,
+        double framesPerSecond,
+        DateTimeOffset capturedAt)
     {
         using var bgra = new Mat();
         Cv2.CvtColor(bgrFrame, bgra, ColorConversionCodes.BGR2BGRA);
@@ -527,7 +714,43 @@ public sealed class CameraTrackingEngine : IAsyncDisposable
         Marshal.Copy(bgra.Data, pixels, 0, pixels.Length);
         FrameReady?.Invoke(
             this,
-            new FrameReadyEventArgs(pixels, bgra.Width, bgra.Height, stride, objects, framesPerSecond));
+            new FrameReadyEventArgs(
+                pixels,
+                bgra.Width,
+                bgra.Height,
+                stride,
+                objects,
+                framesPerSecond,
+                Math.Max(0d, (DateTimeOffset.UtcNow - capturedAt).TotalMilliseconds)));
+    }
+
+    private void RaiseSourceStatus(
+        string status,
+        string? detail,
+        int reconnectAttempt,
+        VideoCapture? capture)
+    {
+        var width = capture is null ? 0 : Math.Max(0, (int)capture.Get(VideoCaptureProperties.FrameWidth));
+        var height = capture is null ? 0 : Math.Max(0, (int)capture.Get(VideoCaptureProperties.FrameHeight));
+        StatusChanged?.Invoke(this, status);
+        SourceStatusChanged?.Invoke(
+            this,
+            new VideoSourceStatusEventArgs(status, detail, reconnectAttempt, width, height));
+    }
+
+    private static int GetReconnectDelay(CameraSourceOptions options, int reconnectAttempt)
+    {
+        var initial = Math.Max(50, options.ReconnectInitialDelayMilliseconds);
+        var maximum = Math.Max(initial, options.ReconnectMaximumDelayMilliseconds);
+        var exponent = Math.Min(10, Math.Max(0, reconnectAttempt - 1));
+        var delay = initial * Math.Pow(2, exponent);
+        return (int)Math.Min(maximum, delay);
+    }
+
+    private static void WaitForReconnect(CancellationToken cancellationToken, int milliseconds)
+    {
+        cancellationToken.WaitHandle.WaitOne(TimeSpan.FromMilliseconds(Math.Max(0, milliseconds)));
+        cancellationToken.ThrowIfCancellationRequested();
     }
 
     private void UpdateLatestSnapshot(Mat frame, IReadOnlyList<TrackedObject> objects)
@@ -569,14 +792,14 @@ public sealed class CameraTrackingEngine : IAsyncDisposable
     {
         private readonly object _gate = new();
         private readonly AutoResetEvent _frameAvailable = new(false);
-        private Mat? _latest;
+        private FramePacket? _latest;
         private Exception? _error;
         private bool _completed;
 
-        public void Publish(Mat source)
+        public void Publish(Mat source, DateTimeOffset capturedAt)
         {
             var copy = source.Clone();
-            Mat? previous;
+            FramePacket? previous;
             lock (_gate)
             {
                 if (_completed)
@@ -586,14 +809,14 @@ public sealed class CameraTrackingEngine : IAsyncDisposable
                 }
 
                 previous = _latest;
-                _latest = copy;
+                _latest = new FramePacket(copy, capturedAt);
             }
 
             previous?.Dispose();
             _frameAvailable.Set();
         }
 
-        public Mat? Take(CancellationToken cancellationToken)
+        public FramePacket? Take(CancellationToken cancellationToken)
         {
             while (true)
             {
@@ -620,7 +843,11 @@ public sealed class CameraTrackingEngine : IAsyncDisposable
                 var signaled = WaitHandle.WaitAny([_frameAvailable, cancellationToken.WaitHandle]);
                 if (signaled == 1)
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
+                    // StopAsync intentionally signals this handle. Returning a
+                    // completed buffer is enough for the processing loop to
+                    // leave normally and avoids surfacing an expected
+                    // OperationCanceledException in debuggers.
+                    return null;
                 }
             }
         }
@@ -646,6 +873,14 @@ public sealed class CameraTrackingEngine : IAsyncDisposable
             }
 
             _frameAvailable.Dispose();
+        }
+
+        public sealed class FramePacket(Mat frame, DateTimeOffset capturedAt) : IDisposable
+        {
+            public Mat Frame { get; } = frame;
+            public DateTimeOffset CapturedAt { get; } = capturedAt;
+
+            public void Dispose() => Frame.Dispose();
         }
     }
 

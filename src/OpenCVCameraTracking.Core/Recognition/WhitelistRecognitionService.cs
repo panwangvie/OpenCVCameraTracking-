@@ -21,6 +21,7 @@ public sealed class WhitelistRecognitionService : IDisposable
     private const int UnknownEnterVotes = 5;
     private const double FaceExitThresholdOffset = 0.04d;
     private readonly object _gate = new();
+    private readonly SemaphoreSlim _mutationGate = new(1, 1);
     private readonly string _storageDirectory;
     private readonly string _samplesDirectory;
     private readonly string _profilesPath;
@@ -161,21 +162,29 @@ public sealed class WhitelistRecognitionService : IDisposable
         }
     }
 
-    public WhitelistEnrollmentResult Enroll(
+    public Task<WhitelistEnrollmentResult> EnrollAsync(
         Mat bgrFrame,
         TrackedObject target,
         string name,
         WhitelistSubjectKind kind) =>
-        EnrollCore(bgrFrame, target.Box, target.Landmarks, name, kind);
+        EnrollAsync(bgrFrame, target.Box, target.Landmarks, name, kind);
 
-    public WhitelistEnrollmentResult Enroll(
+    public Task<WhitelistEnrollmentResult> EnrollAsync(
         Mat bgrFrame,
         Rect region,
         string name,
         WhitelistSubjectKind kind) =>
-        EnrollCore(bgrFrame, region, null, name, kind);
+        EnrollAsync(bgrFrame, region, null, name, kind);
 
-    private WhitelistEnrollmentResult EnrollCore(
+    private Task<WhitelistEnrollmentResult> EnrollAsync(
+        Mat bgrFrame,
+        Rect region,
+        IReadOnlyList<Point2f>? landmarks,
+        string name,
+        WhitelistSubjectKind kind) =>
+        Task.Run(() => EnrollCoreAsync(bgrFrame, region, landmarks, name, kind));
+
+    private async Task<WhitelistEnrollmentResult> EnrollCoreAsync(
         Mat bgrFrame,
         Rect region,
         IReadOnlyList<Point2f>? landmarks,
@@ -188,50 +197,71 @@ public sealed class WhitelistRecognitionService : IDisposable
             return new WhitelistEnrollmentResult(WhitelistEnrollmentStatus.InvalidName);
         }
 
-        lock (_gate)
+        // Enrollment writes images and rebuilds native recognition models. The
+        // caller performs this work on a background thread; the mutation gate
+        // keeps it mutually exclusive with an asynchronous deletion without
+        // holding a monitor lock across any asynchronous operation.
+        await _mutationGate.WaitAsync().ConfigureAwait(false);
+        try
         {
-            ThrowIfDisposed();
-            using var sample = PrepareEnrollmentSample(bgrFrame, region, landmarks, kind);
-            if (sample is null || sample.Empty())
+            lock (_gate)
             {
-                return new WhitelistEnrollmentResult(WhitelistEnrollmentStatus.NoMatchingTarget);
-            }
-
-            var profile = _profiles.FirstOrDefault(candidate =>
-                candidate.Kind == kind &&
-                string.Equals(candidate.Name, normalizedName, StringComparison.CurrentCultureIgnoreCase));
-            if (profile is null)
-            {
-                profile = new StoredProfile
+                ThrowIfDisposed();
+                using var sample = PrepareEnrollmentSample(bgrFrame, region, landmarks, kind);
+                if (sample is null || sample.Empty())
                 {
-                    Id = Guid.NewGuid().ToString("N"),
-                    NumericId = _profiles.Count == 0 ? 1 : _profiles.Max(item => item.NumericId) + 1,
-                    Name = normalizedName,
-                    Kind = kind,
-                    CreatedAt = DateTimeOffset.Now
-                };
-                _profiles.Add(profile);
-            }
+                    return new WhitelistEnrollmentResult(WhitelistEnrollmentStatus.NoMatchingTarget);
+                }
 
-            var profileDirectory = GetProfileDirectory(profile.Id);
-            Directory.CreateDirectory(profileDirectory);
-            var samplePath = Path.Combine(profileDirectory, $"{DateTimeOffset.Now:yyyyMMdd-HHmmss-fff}.png");
-            Cv2.ImWrite(samplePath, sample);
-            SaveProfiles();
-            RebuildModels();
-            AppLogger.Info($"Whitelist enrollment succeeded: kind={kind}, profile={profile.Name}, samples={ToPublicProfile(profile).SampleCount}");
-            return new WhitelistEnrollmentResult(
-                WhitelistEnrollmentStatus.Success,
-                ToPublicProfile(profile));
+                var profile = _profiles.FirstOrDefault(candidate =>
+                    candidate.Kind == kind &&
+                    string.Equals(candidate.Name, normalizedName, StringComparison.CurrentCultureIgnoreCase));
+                if (profile is null)
+                {
+                    profile = new StoredProfile
+                    {
+                        Id = Guid.NewGuid().ToString("N"),
+                        NumericId = _profiles.Count == 0 ? 1 : _profiles.Max(item => item.NumericId) + 1,
+                        Name = normalizedName,
+                        Kind = kind,
+                        CreatedAt = DateTimeOffset.Now
+                    };
+                    _profiles.Add(profile);
+                }
+
+                var profileDirectory = GetProfileDirectory(profile.Id);
+                Directory.CreateDirectory(profileDirectory);
+                var samplePath = Path.Combine(profileDirectory, $"{DateTimeOffset.Now:yyyyMMdd-HHmmss-fff}.png");
+                Cv2.ImWrite(samplePath, sample);
+                SaveProfiles();
+                RebuildModels();
+                AppLogger.Info($"Whitelist enrollment succeeded: kind={kind}, profile={profile.Name}, samples={ToPublicProfile(profile).SampleCount}");
+                return new WhitelistEnrollmentResult(
+                    WhitelistEnrollmentStatus.Success,
+                    ToPublicProfile(profile));
+            }
+        }
+        finally
+        {
+            _mutationGate.Release();
         }
     }
 
-    public bool Delete(string profileId)
+    public Task<bool> DeleteAsync(string profileId) =>
+        Task.Run(() => DeleteCoreAsync(profileId));
+
+    private async Task<bool> DeleteCoreAsync(string profileId)
     {
-        lock (_gate)
+        await _mutationGate.WaitAsync().ConfigureAwait(false);
+        try
         {
-            ThrowIfDisposed();
-            var profile = _profiles.FirstOrDefault(item => item.Id == profileId);
+            StoredProfile? profile;
+            lock (_gate)
+            {
+                ThrowIfDisposed();
+                profile = _profiles.FirstOrDefault(item => item.Id == profileId);
+            }
+
             if (profile is null)
             {
                 return false;
@@ -240,18 +270,32 @@ public sealed class WhitelistRecognitionService : IDisposable
             var profileDirectory = GetProfileDirectory(profile.Id);
             if (Directory.Exists(profileDirectory))
             {
-                DeleteDirectoryWithRetry(profileDirectory);
+                await DeleteDirectoryWithRetryAsync(profileDirectory).ConfigureAwait(false);
             }
 
-            _profiles.Remove(profile);
-            SaveProfiles();
-            RebuildModels();
-            AppLogger.Info($"Whitelist profile deleted: kind={profile.Kind}, profile={profile.Name}");
-            return true;
+            lock (_gate)
+            {
+                ThrowIfDisposed();
+                var currentProfile = _profiles.FirstOrDefault(item => item.Id == profileId);
+                if (currentProfile is null)
+                {
+                    return false;
+                }
+
+                _profiles.Remove(currentProfile);
+                SaveProfiles();
+                RebuildModels();
+                AppLogger.Info($"Whitelist profile deleted: kind={currentProfile.Kind}, profile={currentProfile.Name}");
+                return true;
+            }
+        }
+        finally
+        {
+            _mutationGate.Release();
         }
     }
 
-    private static void DeleteDirectoryWithRetry(string directory)
+    private static async Task DeleteDirectoryWithRetryAsync(string directory)
     {
         const int maximumAttempts = 5;
         IOException? lastException = null;
@@ -269,7 +313,7 @@ public sealed class WhitelistRecognitionService : IDisposable
             catch (IOException exception) when (attempt < maximumAttempts)
             {
                 lastException = exception;
-                Thread.Sleep(TimeSpan.FromMilliseconds(120 * attempt));
+                await Task.Delay(TimeSpan.FromMilliseconds(120 * attempt)).ConfigureAwait(false);
             }
         }
 

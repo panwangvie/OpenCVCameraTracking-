@@ -18,7 +18,7 @@
 - 默认使用 OpenCV YuNet ONNX 进行人脸检测，保留 Haar 兼容模式。
 - 内置 YOLOX INT8 ONNX 动物检测模型，无需另外下载模型即可使用。
 - 支持自定义 YOLOv5/YOLOv8 ONNX 模型。
-- "人 + 动物"复合检测：YuNet 人脸与动物检测并发运行，两类目标同时显示并独立跟踪。
+- "人 + 动物"复合检测：YuNet 人脸与动物检测顺序处理同一帧，两类目标同时显示并独立跟踪，避免 OpenCV 原生资源并发访问。
 - IoU 多目标关联、位置平滑和短时丢失保留，画面中显示稳定目标编号。
 - 本地人脸/猫白名单：支持从当前画面自动抓取或拖拽圈选区域录入样本；人脸使用 YuNet 五点对齐与 SFace ONNX 特征向量匹配，猫保留 OpenCV LBPH 轻量级匹配。
 - 白名单成员按最近录入时间倒序显示，样本列表提供缩略图，双击缩略图可查看大图。
@@ -122,7 +122,7 @@ bird, cat, dog, horse, sheep, cow, elephant, bear, zebra, giraffe
 1. `YuNet` 检测人脸，标注为 `face`，使用人脸置信度阈值；
 2. 动物检测复用 `内置 YOLOX INT8（COCO 动物）` 或 `自定义 YOLOv5 / YOLOv8 ONNX`，标注为对应动物类别。
 
-两个检测器在同一帧内并发推理，结果合并后按类别去重，跟踪器按标签独立关联，
+两个检测器在同一帧内顺序推理，结果合并后按类别去重，跟踪器按标签独立关联，
 因此同一个人脸和动物不会互相干扰。该模式全部使用内置模型，无需额外下载。
 
 ## 保存网络视频流
@@ -263,7 +263,7 @@ await engine.DisposeAsync();
 - `Detection/HaarFaceDetector.cs`：Haar 兼容检测。
 - `Detection/YoloXOnnxDetector.cs`：内置动物模型解析。
 - `Detection/YoloOnnxDetector.cs`：自定义 YOLOv5/YOLOv8 模型解析。
-- `Detection/CompositeObjectDetector.cs`：多检测器组合，并发推理并按标签去重。
+- `Detection/CompositeObjectDetector.cs`：多检测器组合、顺序推理并按标签去重。
 - `Tracking/IouMultiObjectTracker.cs`：目标关联、编号和边框平滑。
 - `Recognition/WhitelistRecognitionService.cs`：白名单样本管理、SFace/LBPH 匹配和多帧投票。
 - `Recognition/SFaceEmbeddingExtractor.cs`：五点相似变换对齐、SFace ONNX 推理和余弦相似度计算。
@@ -306,3 +306,12 @@ dotnet build OpenCVCameraTracking.slnx -c Release
 - 内置 YOLOX INT8 完成真实 ONNX 前向推理与输出解析；
 - 主窗口和设置窗口启动烟雾测试；
 - `dotnet format --verify-no-changes` 格式检查。
+
+## 近期更新：多路预览、ONVIF 与稳定性
+
+- **多路预览可选源**：可从当前正在使用的视频源、已启用的本地摄像头、已保存的网络流中勾选预览源，并记住布局与拖拽排序。
+- **视频源稳定性**：支持 DirectShow、Media Foundation、FFmpeg 后端选择；网络流支持主/子码流、打开/读取超时、指数退避重连和低延迟“仅保留最新帧”模式。
+- **ONVIF 管理**：可通过局域网 WS-Discovery 发现 ONVIF 摄像头、读取 RTSP Profile，并在设备支持时使用云台和预置位。发现依赖 UDP 多播 `239.255.255.250:3702`；摄像头须启用 ONVIF，且电脑与摄像头应处于允许多播的同一局域网。RTSP 可播放并不代表设备支持 ONVIF 自动发现。
+- **异步资源清理**：停止跟踪、关闭主窗口和关闭多路预览都采用异步清理流程，避免在 WPF 界面线程同步等待摄像头读取任务；低延迟模式连续启停不会因正常取消而抛出异常。
+- **白名单后台操作**：白名单样本录入、删除重试、特征重建均在后台执行，避免图片文件 I/O 或模型重建阻塞界面。
+- **诊断与日志**：视频源诊断、重连和关键用户操作会记录到 `%LocalAppData%\OpenCVCameraTracking\Logs\application.log`。日志不会记录完整 RTSP 地址、密码或 Microsoft Store 发布身份信息。

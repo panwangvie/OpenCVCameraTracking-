@@ -14,16 +14,16 @@ namespace OpenCVCameraTracking;
 public partial class WhitelistWindow : Window
 {
     private readonly WhitelistRecognitionService _service;
-    private readonly Func<string, WhitelistSubjectKind, WhitelistEnrollmentResult> _enrollCurrent;
+    private readonly Func<string, WhitelistSubjectKind, Task<WhitelistEnrollmentResult>> _enrollCurrent;
     private readonly Func<RegionSelectionResult?>? _selectRegion;
-    private readonly Func<CvRect, string, WhitelistSubjectKind, WhitelistEnrollmentResult>? _enrollRegion;
+    private readonly Func<CvRect, string, WhitelistSubjectKind, Task<WhitelistEnrollmentResult>>? _enrollRegion;
     private readonly Action? _profilesChanged;
 
     public WhitelistWindow(
         WhitelistRecognitionService service,
-        Func<string, WhitelistSubjectKind, WhitelistEnrollmentResult> enrollCurrent,
+        Func<string, WhitelistSubjectKind, Task<WhitelistEnrollmentResult>> enrollCurrent,
         Func<RegionSelectionResult?>? selectRegion = null,
-        Func<CvRect, string, WhitelistSubjectKind, WhitelistEnrollmentResult>? enrollRegion = null,
+        Func<CvRect, string, WhitelistSubjectKind, Task<WhitelistEnrollmentResult>>? enrollRegion = null,
         Action? profilesChanged = null)
     {
         InitializeComponent();
@@ -36,7 +36,7 @@ public partial class WhitelistWindow : Window
         RefreshProfiles();
     }
 
-    private void SelectRegionButton_OnClick(object sender, RoutedEventArgs e)
+    private async void SelectRegionButton_OnClick(object sender, RoutedEventArgs e)
     {
         if (_selectRegion is null || _enrollRegion is null)
         {
@@ -54,7 +54,7 @@ public partial class WhitelistWindow : Window
             ? WhitelistSubjectKind.Cat
             : WhitelistSubjectKind.Face;
         NameBox.Text = region.Name;
-        var result = _enrollRegion(region.Region, region.Name, kind);
+        var result = await _enrollRegion(region.Region, region.Name, kind);
         if (result.Status == WhitelistEnrollmentStatus.Success)
         {
             NameBox.Clear();
@@ -76,12 +76,12 @@ public partial class WhitelistWindow : Window
         ShowInformation(LocalizationManager.Get(resourceKey));
     }
 
-    private void EnrollButton_OnClick(object sender, RoutedEventArgs e)
+    private async void EnrollButton_OnClick(object sender, RoutedEventArgs e)
     {
         var kind = (KindBox.SelectedItem as ComboBoxItem)?.Tag?.ToString() == "Cat"
             ? WhitelistSubjectKind.Cat
             : WhitelistSubjectKind.Face;
-        var result = _enrollCurrent(NameBox.Text, kind);
+        var result = await _enrollCurrent(NameBox.Text, kind);
         if (result.Status == WhitelistEnrollmentStatus.Success)
         {
             NameBox.Clear();
@@ -143,9 +143,9 @@ public partial class WhitelistWindow : Window
         AppLogger.Info($"User requested whitelist deletion: profile={selected.Name}");
         try
         {
-            // Directory enumeration/deletion, profile persistence and model
-            // rebuilding are all offloaded so the WPF dispatcher stays responsive.
-            var deleted = await Task.Run(() => _service.Delete(selected.Id));
+            // Deletion, retries, persistence and model rebuilding all run away
+            // from the WPF dispatcher.
+            var deleted = await _service.DeleteAsync(selected.Id);
             if (deleted)
             {
                 RefreshProfiles();

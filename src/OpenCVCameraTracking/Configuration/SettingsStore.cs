@@ -59,13 +59,21 @@ public static class SettingsStore
     private static void Normalize(ApplicationSettings settings)
     {
         settings.Language = settings.Language is "en-US" ? "en-US" : "zh-CN";
+        settings.SelectedStreamVariant = settings.SelectedStreamVariant is "Sub" ? "Sub" : "Main";
         settings.FaceConfidence = Math.Clamp(settings.FaceConfidence, 0.3f, 0.95f);
         settings.AnimalConfidence = Math.Clamp(settings.AnimalConfidence, 0.15f, 0.9f);
         settings.Streams ??= [];
+        settings.CameraDevices ??= [];
+        settings.LayoutStreamIds ??= [];
+        settings.MultiPreviewSourceKeys ??= [];
         settings.Streams = settings.Streams
             .Where(profile => !string.IsNullOrWhiteSpace(profile.Name) && !string.IsNullOrWhiteSpace(profile.Address))
             .GroupBy(profile => profile.Id)
             .Select(group => group.First())
+            .ToList();
+        settings.CameraDevices = settings.CameraDevices
+            .GroupBy(device => device.DeviceIndex)
+            .Select(group => group.Last())
             .ToList();
         if (settings.SelectedStreamId is not null && settings.Streams.All(x => x.Id != settings.SelectedStreamId))
         {

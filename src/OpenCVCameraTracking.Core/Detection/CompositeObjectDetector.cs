@@ -5,7 +5,7 @@ namespace OpenCVCameraTracking.Core.Detection;
 
 /// <summary>
 /// Composes multiple object detectors into one. On every frame each child
-/// detector runs concurrently, and the results are merged. Overlapping boxes
+/// detector runs in sequence, and the results are merged. Overlapping boxes
 /// that share the same label are de-duplicated with NMS so composite models
 /// never report duplicate targets.
 /// </summary>
@@ -35,12 +35,17 @@ public sealed class CompositeObjectDetector : IObjectDetector
             return _detectors[0].Detect(bgrFrame);
         }
 
-        var merged = Task
-            .WhenAll(_detectors.Select(detector => Task.Run(() => detector.Detect(bgrFrame))))
-            .GetAwaiter()
-            .GetResult()
-            .SelectMany(detections => detections)
-            .ToArray();
+        // OpenCV DNN models and the Mat passed by the capture loop are native
+        // resources. Running multiple detectors against the same Mat on worker
+        // tasks made this synchronous API block waiting for child tasks and
+        // risked native-resource contention. The capture loop is already off
+        // the UI thread, so deterministic sequential execution is safer.
+        var merged = new List<Detection>();
+        foreach (var detector in _detectors)
+        {
+            merged.AddRange(detector.Detect(bgrFrame));
+        }
+
         return RemoveDuplicates(merged);
     }
 

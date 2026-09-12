@@ -177,6 +177,68 @@
         </Style.Triggers>
     </Style>
 
+    <Style TargetType="TabItem">
+        <Setter Property="Foreground" Value="#AFC0C8" />
+        <Setter Property="Background" Value="#202B32" />
+        <Setter Property="BorderBrush" Value="#3B4D58" />
+        <Setter Property="Padding" Value="13,8" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="TabItem">
+                    <Border x:Name="TabBorder" Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1,1,1,0"
+                            CornerRadius="6,6,0,0" Margin="0,0,4,0">
+                        <ContentPresenter ContentSource="Header" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                          Margin="{TemplateBinding Padding}" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="TabBorder" Property="Background" Value="#2B3B45" />
+                        </Trigger>
+                        <Trigger Property="IsSelected" Value="True">
+                            <Setter TargetName="TabBorder" Property="Background" Value="#146B55" />
+                            <Setter TargetName="TabBorder" Property="BorderBrush" Value="#2BB98A" />
+                            <Setter Property="Foreground" Value="White" />
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter TargetName="TabBorder" Property="Opacity" Value="0.45" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style TargetType="TabControl">
+        <Setter Property="Background" Value="#11181D" />
+        <Setter Property="BorderBrush" Value="#344750" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="TabControl">
+                    <Border Background="#11181D" BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="7">
+                        <Grid ClipToBounds="True">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+                            <Border Background="#182127" BorderBrush="#344750" BorderThickness="0,0,0,1"
+                                    Padding="8,8,8,0">
+                                <TabPanel x:Name="HeaderPanel" IsItemsHost="True" />
+                            </Border>
+                            <Border Grid.Row="1" Background="{TemplateBinding Background}">
+                                <ContentPresenter x:Name="PART_SelectedContentHost"
+                                                  ContentSource="SelectedContent" Margin="0" />
+                            </Border>
+                        </Grid>
+                    </Border>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
     <Style x:Key="RoundedScrollThumb" TargetType="Thumb">
         <Setter Property="Background" Value="#526873" />
         <Setter Property="MinHeight" Value="36" />

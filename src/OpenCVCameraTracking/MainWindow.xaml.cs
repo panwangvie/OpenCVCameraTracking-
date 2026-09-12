@@ -35,9 +35,12 @@ public partial class MainWindow : Window
     private bool _storeUpdateCheckRunning;
     private readonly DispatcherTimer _unknownAlertTimer;
     private CameraTrackingEngine? _engine;
+    private CameraSourceOptions? _activeSourceOptions;
     private WriteableBitmap? _previewBitmap;
     private int _renderPending;
     private bool _isClosing;
+    private bool _closingCleanupInProgress;
+    private bool _allowClose;
     private bool _applyingSettings;
     private int _latestFrameWidth;
     private int _latestFrameHeight;
@@ -180,10 +183,35 @@ public partial class MainWindow : Window
         try
         {
             var devices = await Task.Run(DirectShowCameraEnumerator.GetVideoInputDevices);
-            DeviceBox.ItemsSource = devices;
-            DeviceBox.SelectedIndex = devices.Count > 0 ? 0 : -1;
-            StatusText.Text = devices.Count > 0
-                ? LocalizationManager.Format("Status_FoundCameras", devices.Count)
+            var configured = devices.Select(device =>
+            {
+                var profile = _settings.CameraDevices.FirstOrDefault(item => item.DeviceIndex == device.Index);
+                return profile is null
+                    ? device
+                    : device with
+                    {
+                        Name = string.IsNullOrWhiteSpace(profile.Name) ? device.Name : profile.Name,
+                        Group = profile.Group,
+                        Notes = profile.Notes,
+                        IsEnabled = profile.Enabled
+                    };
+            }).ToList();
+            foreach (var device in configured)
+            {
+                if (_settings.CameraDevices.All(profile => profile.DeviceIndex != device.Index))
+                {
+                    _settings.CameraDevices.Add(new CameraDeviceProfile
+                    {
+                        DeviceIndex = device.Index,
+                        Name = device.Name
+                    });
+                }
+            }
+            SaveSettings();
+            DeviceBox.ItemsSource = configured;
+            DeviceBox.SelectedIndex = configured.FindIndex(device => device.IsEnabled);
+            StatusText.Text = configured.Count > 0
+                ? LocalizationManager.Format("Status_FoundCameras", configured.Count)
                 : LocalizationManager.Get("Status_NoCamera");
         }
         catch (Exception exception)
@@ -210,13 +238,15 @@ public partial class MainWindow : Window
                 _whitelistRecognition);
             _engine.FrameReady += EngineOnFrameReady;
             _engine.StatusChanged += EngineOnStatusChanged;
+            _engine.SourceStatusChanged += EngineOnSourceStatusChanged;
             _engine.Faulted += EngineOnFaulted;
 
             StartButton.IsEnabled = false;
             StopButton.IsEnabled = true;
             SetConfigurationEnabled(false);
             StatusText.Text = LocalizationManager.Get("Status_Connecting");
-            await _engine.StartAsync(CreateSourceOptions());
+            _activeSourceOptions = CreateSourceOptions();
+            await _engine.StartAsync(_activeSourceOptions);
         }
         catch (Exception exception)
         {
@@ -232,6 +262,25 @@ public partial class MainWindow : Window
     }
 
     private async void StopButton_OnClick(object sender, RoutedEventArgs e) => await StopEngineAsync();
+
+    private async void ReconnectButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (_engine is null || _activeSourceOptions is null)
+        {
+            return;
+        }
+
+        try
+        {
+            StatusText.Text = LocalizationManager.Get("Status_Reconnecting");
+            await _engine.ReconnectAsync(_activeSourceOptions);
+        }
+        catch (Exception exception)
+        {
+            AppLogger.Error("Manual video source reconnect failed", exception);
+            StatusText.Text = LocalizationManager.Format("Status_Error", exception.Message);
+        }
+    }
 
     private IObjectDetector CreateDetector()
     {
@@ -290,10 +339,15 @@ public partial class MainWindow : Window
         {
             var selectedDevice = DeviceBox.SelectedItem as CameraDeviceInfo
                 ?? throw new InvalidOperationException(LocalizationManager.Get("SelectCameraError"));
+            if (!selectedDevice.IsEnabled)
+            {
+                throw new InvalidOperationException(LocalizationManager.Get("CameraDisabled"));
+            }
             return new CameraSourceOptions
             {
                 Kind = CameraSourceKind.Device,
-                DeviceIndex = selectedDevice.Index
+                DeviceIndex = selectedDevice.Index,
+                PreferredBackend = _settings.PreferredBackend
             };
         }
 
@@ -308,6 +362,9 @@ public partial class MainWindow : Window
         {
             Kind = kind == "File" ? CameraSourceKind.File : CameraSourceKind.Stream,
             Address = address,
+            SubAddress = (StreamProfileBox.SelectedItem as StreamChoice)?.SubAddress,
+            UseSubStream = SelectedTag(StreamVariantBox) == "Sub",
+            PreferredBackend = _settings.PreferredBackend,
             PreferTcpForRtsp = true,
             LowLatencyMode = _settings.RtspLowLatency,
             OpenTimeoutMilliseconds = 5_000,
@@ -356,7 +413,13 @@ public partial class MainWindow : Window
                     e.Pixels,
                     e.Stride,
                     0);
-                MetricsText.Text = LocalizationManager.Format("MetricsFormat", e.FramesPerSecond, e.Objects.Count);
+                MetricsText.Text = LocalizationManager.Format(
+                    "SourceMetricsFormat",
+                    e.FramesPerSecond,
+                    e.Objects.Count,
+                    e.SourceLatencyMilliseconds,
+                    e.Width,
+                    e.Height);
                 HandleRecognitionEvents(e.Objects);
             }
             finally
@@ -369,24 +432,64 @@ public partial class MainWindow : Window
     private void EngineOnStatusChanged(object? sender, string statusCode) =>
         _ = Dispatcher.InvokeAsync(() => StatusText.Text = LocalizationManager.Get($"Status_{statusCode}"));
 
-    private void EngineOnFaulted(object? sender, Exception exception) =>
-        _ = Dispatcher.InvokeAsync(async () =>
+    private void EngineOnSourceStatusChanged(object? sender, VideoSourceStatusEventArgs e) =>
+        _ = Dispatcher.InvokeAsync(() =>
         {
-            AppLogger.Error("Tracking engine reported a fault", exception);
-            var message = exception.InnerException?.Message ?? exception.Message;
-            StatusText.Text = LocalizationManager.Format("Status_Error", message);
-            if (!_isClosing)
+            var status = LocalizationManager.Get($"Status_{e.Status}");
+            if (e.ReconnectAttempt > 0)
             {
-                MessageBox.Show(
-                    this,
-                    message,
-                    LocalizationManager.Get("ProcessingError"),
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Error);
+                status += $" ({e.ReconnectAttempt})";
             }
 
-            await StopEngineAsync();
+            if (!string.IsNullOrWhiteSpace(e.Detail))
+            {
+                status += $" {e.Detail}";
+            }
+
+            StatusText.Text = status;
         });
+
+    private void EngineOnFaulted(object? sender, Exception exception)
+    {
+        if (_isClosing)
+        {
+            return;
+        }
+
+        var operation = Dispatcher.InvokeAsync(() => HandleEngineFaultAsync(exception));
+        _ = ObserveBackgroundTaskAsync(operation.Task.Unwrap(), "Tracking fault cleanup failed");
+    }
+
+    private async Task HandleEngineFaultAsync(Exception exception)
+    {
+        if (_isClosing)
+        {
+            return;
+        }
+
+        AppLogger.Error("Tracking engine reported a fault", exception);
+        var message = exception.InnerException?.Message ?? exception.Message;
+        StatusText.Text = LocalizationManager.Format("Status_Error", message);
+        MessageBox.Show(
+            this,
+            message,
+            LocalizationManager.Get("ProcessingError"),
+            MessageBoxButton.OK,
+            MessageBoxImage.Error);
+        await StopEngineAsync();
+    }
+
+    private static async Task ObserveBackgroundTaskAsync(Task task, string message)
+    {
+        try
+        {
+            await task.ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            AppLogger.Error(message, exception);
+        }
+    }
 
     private async Task StopEngineAsync()
     {
@@ -397,6 +500,7 @@ public partial class MainWindow : Window
             AppLogger.Info("Stopping tracking engine");
             engine.FrameReady -= EngineOnFrameReady;
             engine.StatusChanged -= EngineOnStatusChanged;
+            engine.SourceStatusChanged -= EngineOnSourceStatusChanged;
             engine.Faulted -= EngineOnFaulted;
             await engine.DisposeAsync();
         }
@@ -405,6 +509,7 @@ public partial class MainWindow : Window
         StopButton.IsEnabled = false;
         SetConfigurationEnabled(true);
         _previewBitmap = null;
+        _activeSourceOptions = null;
         _latestFrameWidth = 0;
         _latestFrameHeight = 0;
         PreviewImage.Source = null;
@@ -417,6 +522,7 @@ public partial class MainWindow : Window
         SourceKindBox.IsEnabled = enabled;
         DeviceBox.IsEnabled = enabled;
         StreamProfileBox.IsEnabled = enabled;
+        StreamVariantBox.IsEnabled = enabled;
         AddressBox.IsEnabled = enabled;
         DetectionModeBox.IsEnabled = enabled;
         AnimalModelBox.IsEnabled = enabled;
@@ -462,7 +568,158 @@ public partial class MainWindow : Window
             _settings.LastStreamAddress = choice.Address;
         }
 
+        _settings.SelectedStreamVariant = "Main";
+        SelectComboTag(StreamVariantBox, "Main", "Main");
+        StreamVariantBox.IsEnabled = !string.IsNullOrWhiteSpace(choice.SubAddress);
+
         SaveSettings();
+    }
+
+    private void StreamVariantBox_OnSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_applyingSettings || StreamProfileBox.SelectedItem is not StreamChoice choice)
+        {
+            return;
+        }
+
+        AddressBox.Text = SelectedTag(StreamVariantBox) == "Sub" && !string.IsNullOrWhiteSpace(choice.SubAddress)
+            ? choice.SubAddress
+            : choice.Address;
+        _settings.SelectedStreamVariant = SelectedTag(StreamVariantBox);
+        SaveSettings();
+    }
+
+    private async void DiagnoseButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            PersistUiSelection();
+            var detector = new EmptyObjectDetector();
+            await using var engine = new CameraTrackingEngine(detector);
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+            var result = await engine.DiagnoseAsync(CreateSourceOptions(), timeout.Token);
+            var detail = result.Success
+                ? $"{result.Width}×{result.Height}, {result.OpenDuration.TotalMilliseconds:F0} ms, {result.Backend}"
+                : result.Detail ?? result.Status;
+            StatusText.Text = LocalizationManager.Format(
+                result.Success ? "Status_DiagnosticOk" : "Status_DiagnosticFailed", detail);
+        }
+        catch (Exception exception)
+        {
+            StatusText.Text = LocalizationManager.Format("Status_DiagnosticFailed", exception.Message);
+            AppLogger.Error("Video source diagnostic failed", exception);
+        }
+    }
+
+    private void MultiCameraButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        var sources = BuildMultiPreviewSources(out var currentSourceKey);
+        if (sources.Count == 0)
+        {
+            MessageBox.Show(this, LocalizationManager.Get("NoSourcesForGrid"),
+                LocalizationManager.Get("Information"), MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var selectedKeys = _settings.MultiPreviewSourceKeys
+            .Where(key => sources.Any(source => string.Equals(source.Key, key, StringComparison.OrdinalIgnoreCase)))
+            .ToList();
+        if (selectedKeys.Count == 0 && currentSourceKey is not null)
+        {
+            selectedKeys.Add(currentSourceKey);
+        }
+        if (selectedKeys.Count == 0)
+        {
+            selectedKeys.Add(sources[0].Key);
+        }
+
+        var selectionWindow = new MultiCameraSourceSelectionWindow(sources, selectedKeys) { Owner = this };
+        if (selectionWindow.ShowDialog() != true)
+        {
+            return;
+        }
+
+        var selectedSources = selectionWindow.SelectedSources;
+        _settings.MultiPreviewSourceKeys = selectedSources.Select(source => source.Key).ToList();
+        var window = new MultiCameraWindow(selectedSources, _settings) { Owner = this };
+        window.ShowDialog();
+        _settings.SelectedLayout = window.SelectedLayout;
+        _settings.LayoutStreamIds = window.OrderedSourceKeys.ToList();
+        SaveSettings();
+    }
+
+    private List<MultiPreviewSource> BuildMultiPreviewSources(out string? currentSourceKey)
+    {
+        var sources = new Dictionary<string, MultiPreviewSource>(StringComparer.OrdinalIgnoreCase);
+        currentSourceKey = null;
+        void Add(MultiPreviewSource source) => sources.TryAdd(source.Key, source);
+
+        try
+        {
+            var current = CreateSourceOptions();
+            currentSourceKey = current.Kind switch
+            {
+                CameraSourceKind.Device => $"device:{current.DeviceIndex}",
+                CameraSourceKind.File => "current-file",
+                _ when (StreamProfileBox.SelectedItem as StreamChoice)?.Id is { } id => $"stream:{id}",
+                _ => "current-stream"
+            };
+            var description = current.Kind switch
+            {
+                CameraSourceKind.Device => LocalizationManager.Get("LocalPreviewSource"),
+                CameraSourceKind.File => LocalizationManager.Get("FilePreviewSource"),
+                _ => LocalizationManager.Get("NetworkPreviewSource")
+            };
+            Add(new MultiPreviewSource(
+                currentSourceKey,
+                LocalizationManager.Get("CurrentPreviewSource"),
+                description,
+                current));
+        }
+        catch (InvalidOperationException)
+        {
+            // A current source is optional; the saved sources are still selectable.
+        }
+
+        if (DeviceBox.ItemsSource is IEnumerable<CameraDeviceInfo> devices)
+        {
+            foreach (var device in devices.Where(device => device.IsEnabled))
+            {
+                Add(new MultiPreviewSource(
+                    $"device:{device.Index}",
+                    device.Name,
+                    string.IsNullOrWhiteSpace(device.Group)
+                        ? LocalizationManager.Get("LocalPreviewSource")
+                        : $"{LocalizationManager.Get("LocalPreviewSource")} · {device.Group}",
+                    new CameraSourceOptions
+                    {
+                        Kind = CameraSourceKind.Device,
+                        DeviceIndex = device.Index,
+                        PreferredBackend = _settings.PreferredBackend
+                    }));
+            }
+        }
+
+        foreach (var profile in _settings.Streams.Where(profile => profile.Enabled))
+        {
+            Add(new MultiPreviewSource(
+                $"stream:{profile.Id}",
+                profile.Name,
+                string.IsNullOrWhiteSpace(profile.Group)
+                    ? LocalizationManager.Get("NetworkPreviewSource")
+                    : $"{LocalizationManager.Get("NetworkPreviewSource")} · {profile.Group}",
+                new CameraSourceOptions
+                {
+                    Kind = CameraSourceKind.Stream,
+                    Address = profile.Address,
+                    SubAddress = profile.SubAddress,
+                    PreferredBackend = _settings.PreferredBackend,
+                    LowLatencyMode = _settings.RtspLowLatency,
+                    PreferTcpForRtsp = true
+                }));
+        }
+
+        return sources.Values.OrderBy(source => source.Name, StringComparer.CurrentCulture).ToList();
     }
 
     private void AddressBox_OnLostFocus(object sender, RoutedEventArgs e)
@@ -559,11 +816,11 @@ public partial class MainWindow : Window
     {
         var window = new WhitelistWindow(
             _whitelistRecognition,
-            (name, kind) => _engine?.EnrollCurrentTarget(name, kind)
-                ?? new WhitelistEnrollmentResult(WhitelistEnrollmentStatus.NoFrame),
+            (name, kind) => _engine?.EnrollCurrentTargetAsync(name, kind)
+                ?? Task.FromResult(new WhitelistEnrollmentResult(WhitelistEnrollmentStatus.NoFrame)),
             SelectRegionFromCurrentFrame,
-            (region, name, kind) => _engine?.EnrollCurrentRegion(region, name, kind)
-                ?? new WhitelistEnrollmentResult(WhitelistEnrollmentStatus.NoFrame),
+            (region, name, kind) => _engine?.EnrollCurrentRegionAsync(region, name, kind)
+                ?? Task.FromResult(new WhitelistEnrollmentResult(WhitelistEnrollmentStatus.NoFrame)),
             UpdateWhitelistSummary)
         {
             Owner = this
@@ -735,13 +992,16 @@ public partial class MainWindow : Window
         {
             new(null, LocalizationManager.Get("ManualAddress"), string.Empty)
         };
-        choices.AddRange(_settings.Streams.Select(profile => new StreamChoice(profile.Id, profile.Name, profile.Address)));
+        choices.AddRange(_settings.Streams.Where(profile => profile.Enabled)
+            .Select(profile => new StreamChoice(profile.Id, profile.Name, profile.Address, profile.SubAddress)));
         StreamProfileBox.ItemsSource = choices;
         var selected = choices.FirstOrDefault(choice => choice.Id == _settings.SelectedStreamId) ?? choices[0];
         StreamProfileBox.SelectedItem = selected;
         AddressBox.Text = string.IsNullOrWhiteSpace(selected.Address)
             ? _settings.LastStreamAddress
             : selected.Address;
+        SelectComboTag(StreamVariantBox, _settings.SelectedStreamVariant, "Main");
+        StreamVariantBox.IsEnabled = !string.IsNullOrWhiteSpace(selected.SubAddress);
     }
 
     private void PersistUiSelection()
@@ -776,17 +1036,51 @@ public partial class MainWindow : Window
             ?? comboBox.Items.OfType<ComboBoxItem>().First(item => item.Tag?.ToString() == fallbackTag);
     }
 
-    protected override void OnClosing(CancelEventArgs e)
+    protected override async void OnClosing(CancelEventArgs e)
     {
+        if (_allowClose)
+        {
+            base.OnClosing(e);
+            return;
+        }
+
+        e.Cancel = true;
+        if (_closingCleanupInProgress)
+        {
+            return;
+        }
+
+        _closingCleanupInProgress = true;
         _isClosing = true;
-        PersistUiSelection();
-        _engine?.DisposeAsync().AsTask().GetAwaiter().GetResult();
-        _engine = null;
         _storeUpdateTimer.Stop();
         _unknownAlertTimer.Stop();
-        _whitelistRecognition.Dispose();
-        base.OnClosing(e);
+        try
+        {
+            PersistUiSelection();
+            await StopEngineAsync();
+        }
+        catch (Exception exception)
+        {
+            AppLogger.Error("Application shutdown cleanup failed", exception);
+        }
+        finally
+        {
+            _whitelistRecognition.Dispose();
+            _allowClose = true;
+            _closingCleanupInProgress = false;
+            // OnClosing can complete synchronously when no capture is active.
+            // Closing again on the same call stack re-enters WPF's closing
+            // transition and throws InvalidOperationException. Queue the final
+            // close after this notification has returned to the dispatcher.
+            _ = Dispatcher.BeginInvoke(DispatcherPriority.Normal, new Action(Close));
+        }
     }
 
-    private sealed record StreamChoice(string? Id, string Name, string Address);
+    private sealed record StreamChoice(string? Id, string Name, string Address, string SubAddress = "");
+
+    private sealed class EmptyObjectDetector : IObjectDetector
+    {
+        public IReadOnlyList<Detection> Detect(OpenCvSharp.Mat frame) => [];
+        public void Dispose() { }
+    }
 }

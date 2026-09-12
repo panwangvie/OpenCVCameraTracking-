@@ -56,6 +56,11 @@
                             <TextBlock Text="{DynamicResource SavedStream}" />
                             <ComboBox x:Name="StreamProfileBox" DisplayMemberPath="Name"
                                       SelectionChanged="StreamProfileBox_OnSelectionChanged" />
+                            <TextBlock Text="{DynamicResource StreamVariant}" />
+                            <ComboBox x:Name="StreamVariantBox" SelectionChanged="StreamVariantBox_OnSelectionChanged">
+                                <ComboBoxItem Content="{DynamicResource MainStream}" Tag="Main" />
+                                <ComboBoxItem Content="{DynamicResource SubStream}" Tag="Sub" />
+                            </ComboBox>
                         </StackPanel>
                         <TextBlock Text="{DynamicResource AddressOrFile}" />
                         <Grid>
@@ -124,6 +129,17 @@
                                 Background="#087F5B" BorderBrush="#18A979" FontWeight="SemiBold" />
                         <Button x:Name="StopButton" Grid.Column="1" Content="{DynamicResource Stop}"
                                 Click="StopButton_OnClick" IsEnabled="False" />
+                    </Grid>
+
+                    <Grid Margin="0,0,0,2">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Button Content="{DynamicResource Diagnose}" Click="DiagnoseButton_OnClick" />
+                        <Button Grid.Column="1" Content="{DynamicResource MultiCamera}" Click="MultiCameraButton_OnClick" />
+                        <Button Grid.Column="2" Content="{DynamicResource Reconnect}" Click="ReconnectButton_OnClick" />
                     </Grid>
 
                     <Border Margin="0,6,0,0" Padding="10" CornerRadius="7" Background="#11171B">
