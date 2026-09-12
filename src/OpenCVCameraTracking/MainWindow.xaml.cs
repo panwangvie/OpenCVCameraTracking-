@@ -31,6 +31,8 @@ public partial class MainWindow : Window
     private readonly List<RecentRecognitionEvent> _recentRecognitionEvents = [];
     private readonly StoreUpdateChecker _storeUpdateChecker = new();
     private StoreUpdateInfo? _pendingStoreUpdate;
+    private readonly DispatcherTimer _storeUpdateTimer;
+    private bool _storeUpdateCheckRunning;
     private readonly DispatcherTimer _unknownAlertTimer;
     private CameraTrackingEngine? _engine;
     private WriteableBitmap? _previewBitmap;
@@ -52,6 +54,12 @@ public partial class MainWindow : Window
             _unknownAlertTimer.Stop();
             UnknownAlertBanner.Visibility = Visibility.Collapsed;
         };
+        _storeUpdateTimer = new DispatcherTimer
+        {
+            // Keep the running app aware of Store releases without polling too often.
+            Interval = TimeSpan.FromMinutes(20)
+        };
+        _storeUpdateTimer.Tick += StoreUpdateTimerOnTick;
         _settings = ((App)Application.Current).Settings;
         ApplySettingsToUi();
         RefreshVersionDisplay();
@@ -62,14 +70,60 @@ public partial class MainWindow : Window
     {
         Loaded -= MainWindowOnLoaded;
         await RefreshDevicesAsync();
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));
-        _pendingStoreUpdate = await _storeUpdateChecker.CheckAsync(timeout.Token);
-        if (_pendingStoreUpdate is not null)
+        await CheckForStoreUpdateAsync();
+        _storeUpdateTimer.Start();
+    }
+
+    private async void StoreUpdateTimerOnTick(object? sender, EventArgs e)
+    {
+        await CheckForStoreUpdateAsync();
+    }
+
+    private async Task CheckForStoreUpdateAsync()
+    {
+        if (_isClosing || _storeUpdateCheckRunning)
         {
-            RefreshVersionDisplay();
-            RefreshVersionDisplay(_pendingStoreUpdate);
+            return;
+        }
+
+        _storeUpdateCheckRunning = true;
+        try
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+            StoreUpdateInfo? update;
+            try
+            {
+                update = await _storeUpdateChecker.CheckAsync(timeout.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                // A slow/offline network must never interrupt the camera UI.
+                return;
+            }
+
+            if (update is null)
+            {
+                return;
+            }
+
+            if (IsUpdateDismissed(update))
+            {
+                return;
+            }
+
+            var isNewUpdate = _pendingStoreUpdate is null ||
+                              update.AvailableVersion > _pendingStoreUpdate.AvailableVersion;
+            _pendingStoreUpdate = update;
+            RefreshVersionDisplay(update);
             UpdateBanner.Visibility = Visibility.Visible;
-            AppLogger.Info($"Microsoft Store update available: current={_pendingStoreUpdate.CurrentVersion}, available={_pendingStoreUpdate.AvailableVersion}");
+            if (isNewUpdate)
+            {
+                AppLogger.Info($"Microsoft Store update available: current={update.CurrentVersion}, available={update.AvailableVersion}");
+            }
+        }
+        finally
+        {
+            _storeUpdateCheckRunning = false;
         }
     }
 
@@ -99,6 +153,26 @@ public partial class MainWindow : Window
             AppLogger.Error("Unable to open Microsoft Store", exception);
         }
     }
+
+    private void DismissUpdateButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (_pendingStoreUpdate is null)
+        {
+            UpdateBanner.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        _settings.DismissedStoreUpdateVersion = _pendingStoreUpdate.AvailableVersion.ToString(4);
+        SaveSettings();
+        UpdateBanner.Visibility = Visibility.Collapsed;
+        AppLogger.Info($"User dismissed Microsoft Store update: version={_settings.DismissedStoreUpdateVersion}");
+    }
+
+    private bool IsUpdateDismissed(StoreUpdateInfo update) =>
+        string.Equals(
+            _settings.DismissedStoreUpdateVersion,
+            update.AvailableVersion.ToString(4),
+            StringComparison.OrdinalIgnoreCase);
 
     private async Task RefreshDevicesAsync()
     {
@@ -708,6 +782,7 @@ public partial class MainWindow : Window
         PersistUiSelection();
         _engine?.DisposeAsync().AsTask().GetAwaiter().GetResult();
         _engine = null;
+        _storeUpdateTimer.Stop();
         _unknownAlertTimer.Stop();
         _whitelistRecognition.Dispose();
         base.OnClosing(e);

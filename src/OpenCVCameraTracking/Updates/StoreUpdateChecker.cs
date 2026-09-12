@@ -1,6 +1,8 @@
 using System.Net.Http.Json;
 using System.Net.Http;
+using System.IO;
 using System.Reflection;
+using System.Text.Json;
 using OpenCVCameraTracking.Core.Logging;
 
 namespace OpenCVCameraTracking.Updates;
@@ -12,6 +14,7 @@ public sealed class StoreUpdateChecker
 {
     private const string UpdateManifestUrl = "https://raw.githubusercontent.com/wutangyuan/OpenCVCameraTracking-/main/update-manifest.json";
     private static readonly HttpClient HttpClient = new() { Timeout = TimeSpan.FromSeconds(6) };
+    private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
 
     public async Task<StoreUpdateInfo?> CheckAsync(CancellationToken cancellationToken = default)
     {
@@ -19,7 +22,9 @@ public sealed class StoreUpdateChecker
         {
             cancellationToken.ThrowIfCancellationRequested();
             var current = GetCurrentVersion();
-            var manifest = await HttpClient.GetFromJsonAsync<UpdateManifest>(UpdateManifestUrl, cancellationToken);
+            var manifestUrl = Environment.GetEnvironmentVariable("OPENCV_UPDATE_MANIFEST_URL")
+                ?? UpdateManifestUrl;
+            var manifest = await ReadManifestAsync(manifestUrl, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             if (manifest is null || !Version.TryParse(manifest.Version, out var available) || available <= current)
             {
@@ -46,5 +51,16 @@ public sealed class StoreUpdateChecker
         return version ?? new Version(1, 0, 0, 0);
     }
 
-    private sealed record UpdateManifest(string Version, string StoreUrl);
+    private static async Task<UpdateManifest?> ReadManifestAsync(string manifestUrl, CancellationToken cancellationToken)
+    {
+        if (Uri.TryCreate(manifestUrl, UriKind.Absolute, out var uri) && uri.IsFile)
+        {
+            await using var stream = File.OpenRead(uri.LocalPath);
+            return await JsonSerializer.DeserializeAsync<UpdateManifest>(stream, JsonOptions, cancellationToken);
+        }
+
+        return await HttpClient.GetFromJsonAsync<UpdateManifest>(manifestUrl, JsonOptions, cancellationToken);
+    }
+
+    public sealed record UpdateManifest(string Version, string StoreUrl);
 }

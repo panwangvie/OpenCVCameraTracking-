@@ -14,6 +14,10 @@ public sealed class ApplicationSettings
     public bool RtspLowLatency { get; set; } = true;
     public float FaceConfidence { get; set; } = 0.55f;
     public float AnimalConfidence { get; set; } = 0.35f;
+    /// <summary>
+    /// The Store version dismissed by the user. A newer version is shown again.
+    /// </summary>
+    public string DismissedStoreUpdateVersion { get; set; } = string.Empty;
     public List<StreamProfile> Streams { get; set; } = [];
 
     public ApplicationSettings DeepClone() =>

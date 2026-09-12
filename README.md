@@ -4,6 +4,8 @@
   <img src="src/OpenCVCameraTracking/Assets/AppIcon.png" alt="OpenCVCameraTracking icon" width="180" />
 </p>
 
+> **v1.0.3.0 / 版本 1.0.3.0** — 新增非阻塞式 Microsoft Store 更新提醒：启动时及持续运行期间每 20 分钟检查一次；可关闭当前版本提示，后续更高版本仍会再次提醒。Added a non-blocking Microsoft Store update reminder that checks at startup and every 20 minutes while the app is running.
+
 基于 `.NET 8 + WPF + OpenCvSharp` 的实时摄像头组件。核心采集、检测和跟踪逻辑位于
 `OpenCVCameraTracking.Core`，WPF 界面与设置管理位于 `OpenCVCameraTracking`。
 

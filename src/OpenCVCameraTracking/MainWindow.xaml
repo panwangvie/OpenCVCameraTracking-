@@ -8,21 +8,22 @@
         WindowStartupLocation="CenterScreen">
     <Grid>
         <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="350" />
+            <ColumnDefinition Width="360" />
             <ColumnDefinition Width="*" />
         </Grid.ColumnDefinitions>
 
-        <Border Grid.Column="0" Margin="14" Padding="18" CornerRadius="11"
+        <Border Grid.Column="0" Margin="12" Padding="14" CornerRadius="11"
                 Background="#192127" BorderBrush="#2A3942" BorderThickness="1">
-            <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <ScrollViewer VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled"
+                          CanContentScroll="False" PanningMode="VerticalOnly">
                 <StackPanel>
-                    <Grid Margin="0,0,0,12">
+                    <Grid Margin="0,0,0,8">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <StackPanel VerticalAlignment="Center">
-                            <TextBlock Text="{DynamicResource VideoSource}" FontSize="22" FontWeight="SemiBold" />
+                            <TextBlock Text="{DynamicResource VideoSource}" FontSize="21" FontWeight="SemiBold" />
                             <TextBlock x:Name="VersionText" Foreground="#7D909B" FontSize="11" Margin="0,2,0,0" />
                         </StackPanel>
                         <Button Grid.Column="1" Content="{DynamicResource Settings}" Click="SettingsButton_OnClick"
@@ -30,7 +31,8 @@
                     </Grid>
 
                     <TextBlock Text="{DynamicResource SourceType}" />
-                    <ComboBox x:Name="SourceKindBox" SelectionChanged="SourceKindBox_OnSelectionChanged">
+                    <ComboBox x:Name="SourceKindBox" Margin="0,3,0,8"
+                              SelectionChanged="SourceKindBox_OnSelectionChanged">
                         <ComboBoxItem Content="{DynamicResource LocalCamera}" Tag="Device" />
                         <ComboBoxItem Content="{DynamicResource NetworkStream}" Tag="Stream" />
                         <ComboBoxItem Content="{DynamicResource LocalFile}" Tag="File" />
@@ -43,9 +45,9 @@
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
-                            <ComboBox x:Name="DeviceBox" Margin="0,5,6,12" DisplayMemberPath="Name" />
+                            <ComboBox x:Name="DeviceBox" Margin="0,3,6,8" DisplayMemberPath="Name" />
                             <Button Grid.Column="1" Content="{DynamicResource Refresh}"
-                                    Click="RefreshDevicesButton_OnClick" Margin="0,4,0,11" />
+                                    Click="RefreshDevicesButton_OnClick" Margin="0,2,0,7" />
                         </Grid>
                     </StackPanel>
 
@@ -67,11 +69,12 @@
                         </Grid>
                     </StackPanel>
 
-                    <Separator Margin="0,5,0,16" Background="#34454F" />
+                    <Separator Margin="0,3,0,11" Background="#34454F" />
                     <TextBlock Text="{DynamicResource DetectionTracking}" FontSize="22" FontWeight="SemiBold"
-                               Margin="0,0,0,10" />
+                               Margin="0,0,0,6" />
                     <TextBlock Text="{DynamicResource DetectionMode}" />
-                    <ComboBox x:Name="DetectionModeBox" SelectionChanged="DetectionModeBox_OnSelectionChanged">
+                    <ComboBox x:Name="DetectionModeBox" Margin="0,3,0,8"
+                              SelectionChanged="DetectionModeBox_OnSelectionChanged">
                         <ComboBoxItem Content="{DynamicResource FaceYuNet}" Tag="Face" />
                         <ComboBoxItem Content="{DynamicResource FaceHaar}" Tag="Haar" />
                         <ComboBoxItem Content="{DynamicResource AnimalYolo}" Tag="Animal" />
@@ -100,19 +103,19 @@
                                    TextWrapping="Wrap" FontSize="12" Margin="0,0,0,12" />
                     </StackPanel>
 
-                    <Separator Margin="0,5,0,16" Background="#34454F" />
+                    <Separator Margin="0,3,0,11" Background="#34454F" />
                     <TextBlock Text="{DynamicResource RecognitionWhitelist}" FontSize="19"
-                               FontWeight="SemiBold" Margin="0,0,0,8" />
+                               FontWeight="SemiBold" Margin="0,0,0,5" />
                     <Button Content="{DynamicResource ManageWhitelist}" Click="WhitelistButton_OnClick"
-                            HorizontalAlignment="Stretch" Margin="0,2,0,6" />
-                    <TextBlock x:Name="WhitelistSummaryText" Foreground="#72D6B5" Margin="2,0,0,10" />
-                    <TextBlock Text="{DynamicResource RecognitionLog}" Margin="0,0,0,5" />
-                    <ListBox x:Name="RecognitionLogBox" Height="112" Margin="0,0,0,12">
+                            HorizontalAlignment="Stretch" Margin="0,1,0,4" />
+                    <TextBlock x:Name="WhitelistSummaryText" Foreground="#72D6B5" Margin="2,0,0,6" />
+                    <TextBlock Text="{DynamicResource RecognitionLog}" Margin="0,0,0,3" />
+                    <ListBox x:Name="RecognitionLogBox" Height="92" Margin="0,0,0,8">
                         <ListBoxItem Content="{DynamicResource NoRecognitionEvents}" IsHitTestVisible="False"
                                      Foreground="#70838E" />
                     </ListBox>
 
-                    <Grid Margin="0,4,0,8">
+                    <Grid Margin="0,2,0,6">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="*" />
@@ -123,7 +126,7 @@
                                 Click="StopButton_OnClick" IsEnabled="False" />
                     </Grid>
 
-                    <Border Margin="0,10,0,0" Padding="12" CornerRadius="7" Background="#11171B">
+                    <Border Margin="0,6,0,0" Padding="10" CornerRadius="7" Background="#11171B">
                         <StackPanel>
                             <TextBlock x:Name="StatusText" Text="{DynamicResource Ready}" TextWrapping="Wrap" />
                             <TextBlock x:Name="MetricsText" Foreground="#8EA1AC" Margin="0,5,0,0" />
@@ -145,7 +148,17 @@
                         Background="#173C35" BorderBrush="#2BB98A" BorderThickness="1"
                         CornerRadius="8" Padding="14,10">
                     <StackPanel>
-                        <TextBlock Text="{DynamicResource UpdateAvailable}" FontWeight="SemiBold" />
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="{DynamicResource UpdateAvailable}" FontWeight="SemiBold"
+                                       VerticalAlignment="Center" />
+                            <Button Grid.Column="1" Content="&#x00D7;" ToolTip="{DynamicResource Close}"
+                                    Click="DismissUpdateButton_OnClick" Padding="7,1" Margin="10,-2,-5,-2"
+                                    FontSize="16" FontWeight="SemiBold" />
+                        </Grid>
                         <TextBlock x:Name="UpdateVersionText" Foreground="#A7E9D2" Margin="0,3,0,8" />
                         <Button Content="{DynamicResource OpenStore}" Click="OpenStoreButton_OnClick"
                                 HorizontalAlignment="Right" Padding="10,5" />
