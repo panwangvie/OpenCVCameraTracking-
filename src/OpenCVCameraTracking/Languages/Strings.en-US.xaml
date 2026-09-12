@@ -2,6 +2,9 @@
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
                     xmlns:sys="clr-namespace:System;assembly=System.Runtime">
     <sys:String x:Key="AppTitle">OpenCVCameraTracking</sys:String>
+    <sys:String x:Key="VersionLabel">Version {0}</sys:String>
+    <sys:String x:Key="UpdateAvailable">New version available</sys:String>
+    <sys:String x:Key="OpenStore">Open Microsoft Store</sys:String>
     <sys:String x:Key="VideoSource">Video source</sys:String>
     <sys:String x:Key="SourceType">Source type</sys:String>
     <sys:String x:Key="LocalCamera">Local camera</sys:String>

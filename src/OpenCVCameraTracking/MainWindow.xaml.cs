@@ -17,6 +17,8 @@ using OpenCVCameraTracking.Core.Logging;
 using OpenCVCameraTracking.Configuration;
 using OpenCVCameraTracking.Localization;
 using Microsoft.Win32;
+using OpenCVCameraTracking.Updates;
+using System.Diagnostics;
 
 namespace OpenCVCameraTracking;
 
@@ -27,6 +29,8 @@ public partial class MainWindow : Window
     private readonly RecognitionEventStore _recognitionEventStore = new();
     private readonly Dictionary<int, string> _recognitionStates = [];
     private readonly List<RecentRecognitionEvent> _recentRecognitionEvents = [];
+    private readonly StoreUpdateChecker _storeUpdateChecker = new();
+    private StoreUpdateInfo? _pendingStoreUpdate;
     private readonly DispatcherTimer _unknownAlertTimer;
     private CameraTrackingEngine? _engine;
     private WriteableBitmap? _previewBitmap;
@@ -50,7 +54,50 @@ public partial class MainWindow : Window
         };
         _settings = ((App)Application.Current).Settings;
         ApplySettingsToUi();
-        Loaded += async (_, _) => await RefreshDevicesAsync();
+        RefreshVersionDisplay();
+        Loaded += MainWindowOnLoaded;
+    }
+
+    private async void MainWindowOnLoaded(object sender, RoutedEventArgs e)
+    {
+        Loaded -= MainWindowOnLoaded;
+        await RefreshDevicesAsync();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+        _pendingStoreUpdate = await _storeUpdateChecker.CheckAsync(timeout.Token);
+        if (_pendingStoreUpdate is not null)
+        {
+            RefreshVersionDisplay();
+            RefreshVersionDisplay(_pendingStoreUpdate);
+            UpdateBanner.Visibility = Visibility.Visible;
+            AppLogger.Info($"Microsoft Store update available: current={_pendingStoreUpdate.CurrentVersion}, available={_pendingStoreUpdate.AvailableVersion}");
+        }
+    }
+
+    private void RefreshVersionDisplay(StoreUpdateInfo? update = null)
+    {
+        var version = update?.CurrentVersion ?? StoreUpdateChecker.GetCurrentVersion();
+        VersionText.Text = LocalizationManager.Format("VersionLabel", version.ToString(4));
+        if (update is not null)
+        {
+            UpdateVersionText.Text = LocalizationManager.Format("VersionLabel", update.AvailableVersion.ToString(4));
+        }
+    }
+
+    private void OpenStoreButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = _pendingStoreUpdate?.StoreUrl ?? "ms-windows-store://search/?query=CameraTracking",
+                UseShellExecute = true
+            });
+            AppLogger.Info("User opened Microsoft Store update link");
+        }
+        catch (Exception exception)
+        {
+            AppLogger.Error("Unable to open Microsoft Store", exception);
+        }
     }
 
     private async Task RefreshDevicesAsync()
@@ -431,6 +478,7 @@ public partial class MainWindow : Window
         SettingsStore.Save(_settings);
         LocalizationManager.Apply(_settings.Language);
         ApplySettingsToUi();
+        RefreshVersionDisplay(_pendingStoreUpdate);
     }
 
     private void WhitelistButton_OnClick(object sender, RoutedEventArgs e)

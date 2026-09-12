@@ -10,6 +10,8 @@ Copy `StoreIdentity.props.example` to `StoreIdentity.props`, then fill in the id
 
 Increase `StorePackageVersion` before every new Store submission. Microsoft Store requires the fourth version segment to be `0`, such as `1.0.1.0`; do not use `1.0.0.1`.
 
+Keep the same four-part version in the WPF project and the repository-root `update-manifest.json`. The application compares that public manifest at startup and shows an update card that opens the Microsoft Store search/listing URL.
+
 ## Local manual package and certificate
 
 Microsoft Store's private signing key cannot be reproduced locally. For local testing, run the following once to create a self-signed certificate whose **Subject** exactly matches the Store `Publisher` value, export it to an ignored PFX file, and trust its public certificate for the current Windows user:

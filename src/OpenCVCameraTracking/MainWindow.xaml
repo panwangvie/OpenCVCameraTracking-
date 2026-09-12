@@ -21,8 +21,10 @@
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Text="{DynamicResource VideoSource}" FontSize="22" FontWeight="SemiBold"
-                                   VerticalAlignment="Center" />
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock Text="{DynamicResource VideoSource}" FontSize="22" FontWeight="SemiBold" />
+                            <TextBlock x:Name="VersionText" Foreground="#7D909B" FontSize="11" Margin="0,2,0,0" />
+                        </StackPanel>
                         <Button Grid.Column="1" Content="{DynamicResource Settings}" Click="SettingsButton_OnClick"
                                 Padding="11,7" Margin="6,0,0,0" />
                     </Grid>
@@ -138,6 +140,17 @@
                 <TextBlock x:Name="PreviewPlaceholder" Text="{DynamicResource WaitingPreview}"
                            HorizontalAlignment="Center" VerticalAlignment="Center"
                            Foreground="#52636D" FontSize="24" />
+                <Border x:Name="UpdateBanner" Visibility="Collapsed"
+                        HorizontalAlignment="Right" VerticalAlignment="Top" Margin="18"
+                        Background="#173C35" BorderBrush="#2BB98A" BorderThickness="1"
+                        CornerRadius="8" Padding="14,10">
+                    <StackPanel>
+                        <TextBlock Text="{DynamicResource UpdateAvailable}" FontWeight="SemiBold" />
+                        <TextBlock x:Name="UpdateVersionText" Foreground="#A7E9D2" Margin="0,3,0,8" />
+                        <Button Content="{DynamicResource OpenStore}" Click="OpenStoreButton_OnClick"
+                                HorizontalAlignment="Right" Padding="10,5" />
+                    </StackPanel>
+                </Border>
                 <Border x:Name="UnknownAlertBanner" Visibility="Collapsed"
                         HorizontalAlignment="Center" VerticalAlignment="Top" Margin="20"
                         Background="#D93A45" BorderBrush="#FF7881" BorderThickness="1"

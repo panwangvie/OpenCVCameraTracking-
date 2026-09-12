@@ -45,6 +45,10 @@ dotnet run --project src/OpenCVCameraTracking/OpenCVCameraTracking.csproj
 
 运行日志由 log4net 在代码中配置，默认写入 `%LocalAppData%\\OpenCVCameraTracking\\Logs\\application.log`；识别事件另存为 `recognition-events.jsonl`。日志仅记录操作和诊断信息，不记录完整 RTSP 地址或商店发布证书内容。
 
+## 版本与更新提醒
+
+主窗口左侧显示当前程序版本。启动时会读取仓库根目录的 `update-manifest.json`，当清单版本高于当前版本时，在预览区右上角显示更新卡片；点击按钮会打开 Microsoft Store。发布新版本时，将 `StorePackageVersion`、WPF 工程版本和 `update-manifest.json` 保持一致，再提交商店包即可。更新检查失败会静默跳过，不影响摄像头使用。
+
 ## 人脸检测
 
 默认的“人脸（YuNet，推荐）”比旧 Haar 模型更适合以下场景：
