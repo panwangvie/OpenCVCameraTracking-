@@ -12,9 +12,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
     <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
-    <Version>1.0.3.0</Version>
-    <AssemblyVersion>1.0.3.0</AssemblyVersion>
-    <FileVersion>1.0.3.0</FileVersion>
+    <Version>1.0.4.0</Version>
+    <AssemblyVersion>1.0.4.0</AssemblyVersion>
+    <FileVersion>1.0.4.0</FileVersion>
     <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
     <ProjectGuid>{DFD87969-650E-4D15-9574-6C1DF607019D}</ProjectGuid>
   </PropertyGroup>
