@@ -31,6 +31,7 @@ public partial class MainWindow : Window
     private readonly List<RecentRecognitionEvent> _recentRecognitionEvents = [];
     private readonly StoreUpdateChecker _storeUpdateChecker = new();
     private StoreUpdateInfo? _pendingStoreUpdate;
+    private string? _dismissedStoreUpdateVersionForSession;
     private readonly DispatcherTimer _storeUpdateTimer;
     private bool _storeUpdateCheckRunning;
     private readonly DispatcherTimer _unknownAlertTimer;
@@ -165,15 +166,14 @@ public partial class MainWindow : Window
             return;
         }
 
-        _settings.DismissedStoreUpdateVersion = _pendingStoreUpdate.AvailableVersion.ToString(4);
-        SaveSettings();
+        _dismissedStoreUpdateVersionForSession = _pendingStoreUpdate.AvailableVersion.ToString(4);
         UpdateBanner.Visibility = Visibility.Collapsed;
-        AppLogger.Info($"User dismissed Microsoft Store update: version={_settings.DismissedStoreUpdateVersion}");
+        AppLogger.Info($"User dismissed Microsoft Store update for this session: version={_dismissedStoreUpdateVersionForSession}");
     }
 
     private bool IsUpdateDismissed(StoreUpdateInfo update) =>
         string.Equals(
-            _settings.DismissedStoreUpdateVersion,
+            _dismissedStoreUpdateVersionForSession,
             update.AvailableVersion.ToString(4),
             StringComparison.OrdinalIgnoreCase);
 
