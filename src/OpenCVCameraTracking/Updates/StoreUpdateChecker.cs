@@ -1,45 +1,62 @@
-using System.Net.Http.Json;
-using System.Net.Http;
-using System.IO;
 using System.Reflection;
-using System.Text.Json;
+using System.Runtime.InteropServices.WindowsRuntime;
+using Windows.ApplicationModel;
+using Windows.Services.Store;
 using OpenCVCameraTracking.Core.Logging;
 
 namespace OpenCVCameraTracking.Updates;
 
 public sealed record StoreUpdateInfo(Version CurrentVersion, Version AvailableVersion, string StoreUrl);
 
-/// <summary>Checks the public release manifest used for the Microsoft Store listing.</summary>
+/// <summary>
+/// Checks the Microsoft Store for package updates that are actually available to the
+/// current signed-in account. This must be called from the application's UI thread.
+/// </summary>
 public sealed class StoreUpdateChecker
 {
-    private const string UpdateManifestUrl = "https://raw.githubusercontent.com/wutangyuan/OpenCVCameraTracking-/main/update-manifest.json";
-    private static readonly HttpClient HttpClient = new() { Timeout = TimeSpan.FromSeconds(6) };
-    private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
+    private const string StoreSearchUrl = "ms-windows-store://search/?query=CameraTracking";
 
     public async Task<StoreUpdateInfo?> CheckAsync(CancellationToken cancellationToken = default)
     {
+        if (!HasPackageIdentity())
+        {
+            // F5/debug and portable runs cannot query a Store entitlement.
+            AppLogger.Info("Microsoft Store update check skipped because the app has no package identity.");
+            return null;
+        }
+
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
             var current = GetCurrentVersion();
-            var manifestUrl = Environment.GetEnvironmentVariable("OPENCV_UPDATE_MANIFEST_URL")
-                ?? UpdateManifestUrl;
-            var manifest = await ReadManifestAsync(manifestUrl, cancellationToken);
+            var context = StoreContext.GetDefault();
+
+            // The Store API is the source of truth: a package in Partner Center that is
+            // still processing or in certification is not returned here.
+            var updates = await context.GetAppAndOptionalStorePackageUpdatesAsync().AsTask();
             cancellationToken.ThrowIfCancellationRequested();
-            if (manifest is null || !Version.TryParse(manifest.Version, out var available) || available <= current)
+
+            Version? available = null;
+            foreach (var update in updates)
             {
-                return null;
+                var package = update.Package;
+                if (package is null)
+                {
+                    continue;
+                }
+
+                var version = ToVersion(package.Id.Version);
+                if (version > current && (available is null || version > available))
+                {
+                    available = version;
+                }
             }
 
-            var storeUrl = string.IsNullOrWhiteSpace(manifest.StoreUrl)
-                ? "ms-windows-store://search/?query=CameraTracking"
-                : manifest.StoreUrl;
-            return new StoreUpdateInfo(current, available, storeUrl);
+            return available is null ? null : new StoreUpdateInfo(current, available, StoreSearchUrl);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            // Store services are unavailable for unpackaged/dev runs and must not
-            // make the camera application fail to start.
+            // Store sign-in, connectivity and availability must not affect camera use.
             AppLogger.Warn($"Microsoft Store update check skipped: {exception.Message}");
             return null;
         }
@@ -47,20 +64,33 @@ public sealed class StoreUpdateChecker
 
     public static Version GetCurrentVersion()
     {
+        var packageVersion = TryGetCurrentPackageVersion();
+        if (packageVersion is not null)
+        {
+            return packageVersion;
+        }
+
         var version = Assembly.GetEntryAssembly()?.GetName().Version;
         return version ?? new Version(1, 0, 0, 0);
     }
 
-    private static async Task<UpdateManifest?> ReadManifestAsync(string manifestUrl, CancellationToken cancellationToken)
+    private static bool HasPackageIdentity()
     {
-        if (Uri.TryCreate(manifestUrl, UriKind.Absolute, out var uri) && uri.IsFile)
-        {
-            await using var stream = File.OpenRead(uri.LocalPath);
-            return await JsonSerializer.DeserializeAsync<UpdateManifest>(stream, JsonOptions, cancellationToken);
-        }
-
-        return await HttpClient.GetFromJsonAsync<UpdateManifest>(manifestUrl, JsonOptions, cancellationToken);
+        return TryGetCurrentPackageVersion() is not null;
     }
 
-    public sealed record UpdateManifest(string Version, string StoreUrl);
+    private static Version? TryGetCurrentPackageVersion()
+    {
+        try
+        {
+            return ToVersion(Package.Current.Id.Version);
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    private static Version ToVersion(PackageVersion version) =>
+        new(version.Major, version.Minor, version.Build, version.Revision);
 }

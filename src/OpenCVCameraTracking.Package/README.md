@@ -10,7 +10,7 @@ Copy `StoreIdentity.props.example` to `StoreIdentity.props`, then fill in the id
 
 Increase `StorePackageVersion` before every new Store submission. Microsoft Store requires the fourth version segment to be `0`, such as `1.0.1.0`; do not use `1.0.0.1`.
 
-Keep the same four-part version in the WPF project and the repository-root `update-manifest.json`. The application compares that public manifest at startup and shows an update card that opens the Microsoft Store search/listing URL.
+Keep the same four-part version in the WPF project and the Store package. The packaged application uses the Microsoft Store `StoreContext` API as its update source, so a version that is only uploaded to Partner Center or still in certification is not shown as available. The repository-root `update-manifest.json` exists only for compatibility with older releases and must not be used to announce a new Store version.
 
 ## Local manual package and certificate
 

@@ -47,7 +47,7 @@
     <ProjectReference Include="..\OpenCVCameraTracking\OpenCVCameraTracking.csproj">
       <Project>{DFD87969-650E-4D15-9574-6C1DF607019D}</Project>
       <Name>OpenCVCameraTracking</Name>
-      <TargetPath>..\OpenCVCameraTracking\bin\$(Platform)\$(Configuration)\net8.0-windows\win-x64\msixpublish\OpenCVCameraTracking.exe</TargetPath>
+      <TargetPath>..\OpenCVCameraTracking\bin\$(Platform)\$(Configuration)\net8.0-windows10.0.22621.0\win-x64\msixpublish\OpenCVCameraTracking.exe</TargetPath>
     </ProjectReference>
     <Content Include="Images\Square44x44Logo.png" />
     <Content Include="Images\Square150x150Logo.png" />

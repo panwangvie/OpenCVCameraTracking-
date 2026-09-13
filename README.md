@@ -49,7 +49,9 @@ dotnet run --project src/OpenCVCameraTracking/OpenCVCameraTracking.csproj
 
 ## 版本与更新提醒
 
-主窗口左侧显示当前程序版本。启动时会读取仓库根目录的 `update-manifest.json`，当清单版本高于当前版本时，在预览区右上角显示更新卡片；点击按钮会打开 Microsoft Store。发布新版本时，将 `StorePackageVersion`、WPF 工程版本和 `update-manifest.json` 保持一致，再提交商店包即可。更新检查失败会静默跳过，不影响摄像头使用。
+主窗口左侧显示当前程序版本。已通过 Microsoft Store 安装的 MSIX 包会在启动时，以及程序持续运行期间每 30 分钟，通过 Windows 的 `StoreContext` 查询该账户实际可获得的更新；仅当新包已由 Microsoft Store 发布并可用时，才会在预览区右上角显示更新卡片。点击按钮会打开 Microsoft Store，用户可关闭提示且不会影响摄像头使用。Partner Center 中“正在认证”或尚未发布的包不会触发提示。
+
+仓库根目录的 `update-manifest.json` 仅为早期版本的兼容清单，不再作为当前版本的正式更新来源；请勿根据它发布或判断商店版本。
 
 ## 人脸检测
 

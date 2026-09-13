@@ -59,8 +59,8 @@ public partial class MainWindow : Window
         };
         _storeUpdateTimer = new DispatcherTimer
         {
-            // Keep the running app aware of Store releases without polling too often.
-            Interval = TimeSpan.FromMinutes(20)
+            // Microsoft Store permits update availability checks no more often than every 30 minutes.
+            Interval = TimeSpan.FromMinutes(30)
         };
         _storeUpdateTimer.Tick += StoreUpdateTimerOnTick;
         _settings = ((App)Application.Current).Settings;
