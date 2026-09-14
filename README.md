@@ -4,7 +4,7 @@
   <img src="src/OpenCVCameraTracking/Assets/AppIcon.png" alt="OpenCVCameraTracking icon" width="180" />
 </p>
 
-> **v1.0.3.0 / 版本 1.0.3.0** — 新增非阻塞式 Microsoft Store 更新提醒：启动时及持续运行期间每 20 分钟检查一次；可关闭当前版本提示，后续更高版本仍会再次提醒。Added a non-blocking Microsoft Store update reminder that checks at startup and every 20 minutes while the app is running.
+> **v1.0.6.0 / 版本 1.0.6.0** — 使用自包含 Windows App SDK 运行库，修复目标电脑未安装 Windows App Runtime 时的启动问题；Microsoft Store 更新提醒仍在启动时及持续运行期间每 30 分钟检查一次。Uses a self-contained Windows App SDK runtime to avoid startup failures on machines without Windows App Runtime; the Microsoft Store update reminder checks at startup and every 30 minutes while the app is running.
 
 基于 `.NET 8 + WPF + OpenCvSharp` 的实时摄像头组件。核心采集、检测和跟踪逻辑位于
 `OpenCVCameraTracking.Core`，WPF 界面与设置管理位于 `OpenCVCameraTracking`。
@@ -43,7 +43,7 @@ dotnet run --project src/OpenCVCameraTracking/OpenCVCameraTracking.csproj
 
 ## Microsoft Store MSIX 打包
 
-项目包含 `src/OpenCVCameraTracking.Package/OpenCVCameraTracking.Package.wapproj`，用于生成 x64 Microsoft Store 上传包。商店发布标识从本机的 `StoreIdentity.props` 读取，该文件不会提交到 Git；详细配置与构建命令见 [打包工程说明](src/OpenCVCameraTracking.Package/README.md)、[完整发布指南](docs/MSIX-打包与微软商店发布指南.md)、[中文商店页面资料](docs/Microsoft-Store商店资料.md) 和 [美国区英文商店资料](docs/Microsoft-Store-Listing-US.md)。
+项目包含 `src/OpenCVCameraTracking.Package/OpenCVCameraTracking.Package.wapproj`，用于生成 x64 Microsoft Store 上传包。商店发布标识从本机的 `StoreIdentity.props` 读取，该文件不会提交到 Git；应用使用自包含 Windows App SDK 运行库，生成的 MSIX 不要求用户另行安装 Windows App Runtime 1.7。详细配置与构建命令见 [打包工程说明](src/OpenCVCameraTracking.Package/README.md)、[完整发布指南](docs/MSIX-打包与微软商店发布指南.md)、[中文商店页面资料](docs/Microsoft-Store商店资料.md) 和 [美国区英文商店资料](docs/Microsoft-Store-Listing-US.md)。
 
 运行日志由 log4net 在代码中配置，默认写入 `%LocalAppData%\\OpenCVCameraTracking\\Logs\\application.log`；识别事件另存为 `recognition-events.jsonl`。日志仅记录操作和诊断信息，不记录完整 RTSP 地址或商店发布证书内容。
 
@@ -52,6 +52,20 @@ dotnet run --project src/OpenCVCameraTracking/OpenCVCameraTracking.csproj
 主窗口左侧显示当前程序版本。已通过 Microsoft Store 安装的 MSIX 包会在启动时，以及程序持续运行期间每 30 分钟，通过 Windows 的 `StoreContext` 查询该账户实际可获得的更新；仅当新包已由 Microsoft Store 发布并可用时，才会在预览区右上角显示更新卡片。点击按钮会打开 Microsoft Store；用户关闭提示后，本次运行不再提醒，重启应用后仍会重新检查。Partner Center 中“正在认证”或尚未发布的包不会触发提示。
 
 仓库根目录的 `update-manifest.json` 仅为早期版本的兼容清单，不再作为当前版本的正式更新来源；请勿根据它发布或判断商店版本。
+
+### 1.0.6.0 商店更新说明 / Store release notes
+
+**中文（简体）**
+
+- 修复部分电脑因未安装 Windows App Runtime 1.7，安装 MSIX 后无法启动的问题。
+- 改用自包含 Windows App SDK 部署，运行库随应用包一起安装，提升离线安装和旁加载的成功率。
+- 保持从 Microsoft Store 查询实际已发布的更新，避免把 Partner Center 中尚未发布或仍在认证的版本误报为可更新版本。
+
+**English (United States)**
+
+- Fixed an issue where the app could fail to start on PCs without Windows App Runtime 1.7 installed.
+- Switched to self-contained Windows App SDK deployment so the runtime is shipped with the app package, improving offline and sideload installation reliability.
+- Continued using Microsoft Store availability data for update checks, preventing versions that are still under certification or not yet published from being reported as available updates.
 
 ## 人脸检测
 

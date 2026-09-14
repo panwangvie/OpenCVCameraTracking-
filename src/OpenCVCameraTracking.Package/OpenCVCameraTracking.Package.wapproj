@@ -57,6 +57,22 @@
 
   <Import Project="$(WapProjPath)\Microsoft.DesktopBridge.targets" />
 
+  <!--
+    The app project uses WindowsAppSDKSelfContained=true, so the Windows App
+    SDK binaries are copied into the application payload.  The WAP project can
+    still discover the NuGet framework registration transitively and add a
+    Microsoft.WindowsAppRuntime.1.7 package dependency to AppxManifest.xml.
+    Remove only that generated framework registration; otherwise machines
+    without the separately installed runtime fail during bootstrapper startup.
+  -->
+  <Target Name="RemoveSelfContainedWindowsAppSDKFrameworkDependency"
+          BeforeTargets="_GenerateAdditionalFrameworkSDKReference">
+    <ItemGroup>
+      <AppxPackageRegistration Remove="@(AppxPackageRegistration)"
+                               Condition="'%(AppxPackageRegistration.WindowsAppSDK)' == 'true'" />
+    </ItemGroup>
+  </Target>
+
   <Target Name="GenerateStorePackageManifest" BeforeTargets="_ValidatePresenceOfAppxManifestItems;BeforeGenerateAppxManifest">
     <PropertyGroup>
       <_ManifestTemplateText>$([System.IO.File]::ReadAllText('$(MSBuildProjectDirectory)\Package.appxmanifest.template'))</_ManifestTemplateText>

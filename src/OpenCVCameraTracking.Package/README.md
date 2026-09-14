@@ -53,3 +53,7 @@ src\OpenCVCameraTracking.Package\AppPackages\*.msixupload
 For Store submission, the `.msixupload` output is recommended because it includes symbol data. A locally signed `.msix` whose `Identity Name` and `Publisher` match the Partner Center identity can also be uploaded; Microsoft Store replaces any existing package signature after certification. The local self-signed certificate remains useful only for sideload testing before submission.
 
 The manifest requests `webcam`, `internetClient`, `privateNetworkClientServer`, and `runFullTrust` capabilities for local cameras, RTSP/network streams, and the desktop WPF process.
+
+## Windows App SDK runtime deployment
+
+The WPF project enables `WindowsAppSDKSelfContained=true`. This places the Windows App SDK runtime binaries in the application payload, so the generated MSIX does not require users to install Windows App Runtime 1.7 separately. The packaging project also removes the transitive framework registration that would otherwise re-add `Microsoft.WindowsAppRuntime.1.7` as an external manifest dependency. This keeps sideloaded packages and offline test machines from failing during Windows App SDK bootstrapper initialization.
