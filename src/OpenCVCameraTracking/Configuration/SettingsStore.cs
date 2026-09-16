@@ -1,5 +1,6 @@
 using System.IO;
 using System.Text.Json;
+using OpenCVCameraTracking.Core.Notifications;
 
 namespace OpenCVCameraTracking.Configuration;
 
@@ -62,10 +63,36 @@ public static class SettingsStore
         settings.SelectedStreamVariant = settings.SelectedStreamVariant is "Sub" ? "Sub" : "Main";
         settings.FaceConfidence = Math.Clamp(settings.FaceConfidence, 0.3f, 0.95f);
         settings.AnimalConfidence = Math.Clamp(settings.AnimalConfidence, 0.15f, 0.9f);
+        if (settings.RestrictedZone is not null && !settings.RestrictedZone.IsValid)
+        {
+            settings.RestrictedZone = null;
+        }
         settings.Streams ??= [];
         settings.CameraDevices ??= [];
         settings.LayoutStreamIds ??= [];
         settings.MultiPreviewSourceKeys ??= [];
+        settings.NotificationChannels ??= [];
+        settings.NotificationChannels = settings.NotificationChannels
+            .Where(channel => channel is not null)
+            .Select(channel =>
+            {
+                channel.Id = string.IsNullOrWhiteSpace(channel.Id) ? Guid.NewGuid().ToString("N") : channel.Id;
+                if (!Enum.IsDefined(channel.Kind))
+                {
+                    channel.Kind = NotificationChannelKind.ServerChan;
+                }
+                channel.EventKeys ??= NotificationEventCatalog.DefaultKeys.ToList();
+                channel.EventKeys = channel.EventKeys
+                    .Where(key => !string.IsNullOrWhiteSpace(key))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                channel.Name = string.IsNullOrWhiteSpace(channel.Name) ? GetDefaultNotificationName(channel.Kind) : channel.Name.Trim();
+                channel.SmtpPort = channel.SmtpPort is < 1 or > 65535 ? 587 : channel.SmtpPort;
+                return channel;
+            })
+            .GroupBy(channel => channel.Id)
+            .Select(group => group.First())
+            .ToList();
         settings.Streams = settings.Streams
             .Where(profile => !string.IsNullOrWhiteSpace(profile.Name) && !string.IsNullOrWhiteSpace(profile.Address))
             .GroupBy(profile => profile.Id)
@@ -80,4 +107,13 @@ public static class SettingsStore
             settings.SelectedStreamId = null;
         }
     }
+
+    private static string GetDefaultNotificationName(NotificationChannelKind kind) => kind switch
+    {
+        NotificationChannelKind.ServerChan => "Server酱通知",
+        NotificationChannelKind.Feishu => "飞书通知",
+        NotificationChannelKind.Email => "邮件通知",
+        NotificationChannelKind.Telegram => "Telegram 通知",
+        _ => "消息通知"
+    };
 }

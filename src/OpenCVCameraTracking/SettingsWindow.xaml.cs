@@ -5,6 +5,7 @@ using OpenCVCameraTracking.Configuration;
 using OpenCVCameraTracking.Core.Camera;
 using OpenCVCameraTracking.Core.Onvif;
 using OpenCVCameraTracking.Core.Logging;
+using OpenCVCameraTracking.Core.Notifications;
 using System.Net;
 using OpenCVCameraTracking.Localization;
 
@@ -17,15 +18,31 @@ public partial class SettingsWindow : Window
     private readonly OnvifDiscoveryService _onvif = new();
     private readonly ObservableCollection<OnvifChoice> _onvifDevices = [];
     private readonly ObservableCollection<OnvifPresetInfo> _presets = [];
+    private readonly Func<Window, RestrictedZoneSettings?>? _selectRestrictedZone;
+    private readonly Action? _clearRestrictedZoneImmediately;
+    private readonly ObservableCollection<NotificationChannelSettings> _notificationChannels;
+    private readonly Func<NotificationChannelSettings, Task<NotificationSendResult>>? _testNotification;
+    private readonly Action<IReadOnlyList<NotificationChannelSettings>>? _persistNotificationChannelsImmediately;
 
-    public SettingsWindow(ApplicationSettings settings)
+    public SettingsWindow(
+        ApplicationSettings settings,
+        Func<Window, RestrictedZoneSettings?>? selectRestrictedZone = null,
+        Action? clearRestrictedZoneImmediately = null,
+        Func<NotificationChannelSettings, Task<NotificationSendResult>>? testNotification = null,
+        Action<IReadOnlyList<NotificationChannelSettings>>? persistNotificationChannelsImmediately = null)
     {
         InitializeComponent();
         Result = settings.DeepClone();
+        _selectRestrictedZone = selectRestrictedZone;
+        _clearRestrictedZoneImmediately = clearRestrictedZoneImmediately;
+        _testNotification = testNotification;
+        _persistNotificationChannelsImmediately = persistNotificationChannelsImmediately;
         _profiles = new ObservableCollection<StreamProfile>(Result.Streams);
         _cameraProfiles = new ObservableCollection<CameraDeviceProfile>(Result.CameraDevices);
+        _notificationChannels = new ObservableCollection<NotificationChannelSettings>(Result.NotificationChannels);
         ProfilesBox.ItemsSource = _profiles;
         CameraProfilesBox.ItemsSource = _cameraProfiles;
+        NotificationChannelsBox.ItemsSource = _notificationChannels;
         OnvifDevicesBox.ItemsSource = _onvifDevices;
         PresetsBox.ItemsSource = _presets;
         SelectComboTag(LanguageBox, Result.Language);
@@ -46,6 +63,8 @@ public partial class SettingsWindow : Window
         }
 
         UpdateConfidenceText();
+        UpdateRestrictedZoneSummary();
+        UpdateNotificationSummary();
     }
 
     public ApplicationSettings Result { get; }
@@ -153,6 +172,147 @@ public partial class SettingsWindow : Window
         AnimalConfidenceText.Text = $"{AnimalConfidenceSlider.Value:P0}";
     }
 
+    private void SetRestrictedZoneButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (_selectRestrictedZone is null)
+        {
+            ShowInformation("RestrictedZoneNoFrame");
+            return;
+        }
+
+        var zone = _selectRestrictedZone(this);
+        if (zone is null)
+        {
+            return;
+        }
+
+        Result.RestrictedZone = zone;
+        UpdateRestrictedZoneSummary();
+    }
+
+    private void ClearRestrictedZoneButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        var result = MessageBox.Show(
+            this,
+            LocalizationManager.Get("RestrictedZoneClearConfirm"),
+            LocalizationManager.Get("RestrictedZoneClearTitle"),
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning);
+        if (result != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        Result.RestrictedZone = null;
+        _clearRestrictedZoneImmediately?.Invoke();
+        UpdateRestrictedZoneSummary();
+    }
+
+    private void UpdateRestrictedZoneSummary()
+    {
+        RestrictedZoneSummaryText.Text = Result.RestrictedZone is { IsValid: true }
+            ? LocalizationManager.Get("RestrictedZoneConfigured")
+            : LocalizationManager.Get("RestrictedZoneNotSet");
+        SetRestrictedZoneButton.IsEnabled = _selectRestrictedZone is not null;
+        ClearRestrictedZoneButton.IsEnabled = Result.RestrictedZone is { IsValid: true };
+    }
+
+    private void NotificationChannelsBox_OnSelectionChanged(object sender, SelectionChangedEventArgs e) =>
+        UpdateNotificationSummary();
+
+    private void NotificationChannelsBox_OnMouseDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (e.OriginalSource is not DependencyObject source ||
+            ItemsControl.ContainerFromElement(NotificationChannelsBox, source) is not ListBoxItem)
+        {
+            return;
+        }
+
+        EditNotificationButton_OnClick(sender, e);
+        e.Handled = true;
+    }
+
+    private void UpdateNotificationSummary()
+    {
+        var enabledCount = _notificationChannels.Count(channel => channel.Enabled);
+        NotificationChannelsSummaryText.Text = LocalizationManager.Format(
+            "NotificationChannelsSummary",
+            _notificationChannels.Count,
+            enabledCount);
+    }
+
+    private void AddNotificationButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        var channel = new NotificationChannelSettings
+        {
+            Name = LocalizationManager.Get("NotificationDefaultName")
+        };
+        var window = new NotificationEditorWindow(channel, _testNotification) { Owner = this };
+        if (window.ShowDialog() != true)
+        {
+            return;
+        }
+
+        _notificationChannels.Add(window.Result);
+        NotificationChannelsBox.SelectedItem = window.Result;
+        UpdateNotificationSummary();
+        PersistNotificationChannelsImmediately();
+    }
+
+    private void EditNotificationButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (NotificationChannelsBox.SelectedItem is not NotificationChannelSettings selected)
+        {
+            ShowInformation("NotificationNoSelection");
+            return;
+        }
+
+        var window = new NotificationEditorWindow(selected, _testNotification) { Owner = this };
+        if (window.ShowDialog() != true)
+        {
+            return;
+        }
+
+        var index = _notificationChannels.IndexOf(selected);
+        if (index >= 0)
+        {
+            _notificationChannels[index] = window.Result;
+            NotificationChannelsBox.SelectedItem = window.Result;
+        }
+        UpdateNotificationSummary();
+        PersistNotificationChannelsImmediately();
+    }
+
+    private void DeleteNotificationButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (NotificationChannelsBox.SelectedItem is not NotificationChannelSettings selected)
+        {
+            ShowInformation("NotificationNoSelection");
+            return;
+        }
+
+        var result = MessageBox.Show(
+            this,
+            LocalizationManager.Format("NotificationDeleteConfirm", selected.Name),
+            LocalizationManager.Get("DeleteNotification"),
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning);
+        if (result != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        _notificationChannels.Remove(selected);
+        UpdateNotificationSummary();
+        PersistNotificationChannelsImmediately();
+    }
+
+    private void PersistNotificationChannelsImmediately()
+    {
+        _persistNotificationChannelsImmediately?.Invoke(
+            _notificationChannels.Select(channel => channel.DeepClone()).ToList());
+    }
+
     private void SaveButton_OnClick(object sender, RoutedEventArgs e)
     {
         Result.Language = SelectedTag(LanguageBox);
@@ -165,6 +325,7 @@ public partial class SettingsWindow : Window
         Result.AnimalConfidence = (float)AnimalConfidenceSlider.Value;
         Result.Streams = _profiles.ToList();
         Result.CameraDevices = _cameraProfiles.ToList();
+        Result.NotificationChannels = _notificationChannels.ToList();
         Result.SelectedStreamId = (DefaultStreamBox.SelectedItem as DefaultStreamChoice)?.Id;
         DialogResult = true;
     }

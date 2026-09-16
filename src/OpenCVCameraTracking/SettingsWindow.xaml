@@ -1,8 +1,8 @@
 <Window x:Class="OpenCVCameraTracking.SettingsWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="{DynamicResource SettingsTitle}" Width="1160" Height="800"
-        MinWidth="980" MinHeight="680" WindowStartupLocation="CenterOwner"
+        Title="{DynamicResource SettingsTitle}" Width="1160" Height="740"
+        MinWidth="980" MinHeight="620" WindowStartupLocation="CenterOwner"
         Background="#101418" Foreground="#EAF0F4" ResizeMode="CanResizeWithGrip"
         Icon="Assets/AppIcon.ico">
     <Grid Margin="20">
@@ -120,6 +120,82 @@
                                 <ComboBox x:Name="DefaultStreamBox" DisplayMemberPath="Name" />
                             </StackPanel>
                         </ScrollViewer>
+                    </TabItem>
+                    <TabItem Header="{DynamicResource AlertSettings}">
+                        <Grid Margin="12">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="12" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+                            <StackPanel Grid.Row="0">
+                                <TextBlock Text="{DynamicResource RestrictedZone}" FontSize="18" FontWeight="SemiBold" />
+                                <TextBlock Text="{DynamicResource RestrictedZoneHint}" Foreground="#8FA2AD"
+                                           TextWrapping="Wrap" Margin="0,8,0,14" />
+                                <Border Background="#11171B" BorderBrush="#2C3B44" BorderThickness="1"
+                                        CornerRadius="7" Padding="12">
+                                    <StackPanel>
+                                        <TextBlock x:Name="RestrictedZoneSummaryText" Foreground="#F1B84B"
+                                                   TextWrapping="Wrap" />
+                                        <Grid Margin="0,12,0,0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <Button x:Name="SetRestrictedZoneButton" Content="{DynamicResource SetRestrictedZone}"
+                                                    Click="SetRestrictedZoneButton_OnClick" Margin="0,0,4,0" />
+                                            <Button x:Name="ClearRestrictedZoneButton" Grid.Column="1" Content="{DynamicResource ClearRestrictedZone}"
+                                                    Click="ClearRestrictedZoneButton_OnClick" Margin="4,0,0,0" />
+                                        </Grid>
+                                    </StackPanel>
+                                </Border>
+                            </StackPanel>
+                            <Grid Grid.Row="2">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <TextBlock Text="{DynamicResource NotificationSettings}" FontSize="18" FontWeight="SemiBold" />
+                                <TextBlock Grid.Row="1" Text="{DynamicResource NotificationSettingsHint}" Foreground="#8FA2AD"
+                                           TextWrapping="Wrap" Margin="0,8,0,12" />
+                                <ListBox Grid.Row="2" x:Name="NotificationChannelsBox" MinHeight="80" Margin="0,0,0,8"
+                                         ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                         MouseDoubleClick="NotificationChannelsBox_OnMouseDoubleClick"
+                                         SelectionChanged="NotificationChannelsBox_OnSelectionChanged">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid Margin="4,3">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
+                                                <TextBlock Grid.Column="1" Text="{Binding Kind}" Foreground="#72D6B5"
+                                                           Margin="12,0,0,0" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                                <TextBlock Grid.Row="3" x:Name="NotificationChannelsSummaryText" Foreground="#8FA2AD"
+                                           FontSize="12" Margin="0,0,0,8" />
+                                <Grid Grid.Row="4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Button Content="{DynamicResource AddNotification}" Click="AddNotificationButton_OnClick"
+                                            Background="#087F5B" BorderBrush="#18A979" Margin="0,0,4,0" />
+                                    <Button Grid.Column="1" Content="{DynamicResource EditNotification}" Click="EditNotificationButton_OnClick"
+                                            Margin="4,0" />
+                                    <Button Grid.Column="2" Content="{DynamicResource DeleteNotification}" Click="DeleteNotificationButton_OnClick"
+                                            Margin="4,0,0,0" />
+                                </Grid>
+                            </Grid>
+                        </Grid>
                     </TabItem>
                     <TabItem Header="{DynamicResource RtspSettings}">
                         <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="12">

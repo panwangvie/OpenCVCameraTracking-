@@ -9,6 +9,7 @@
 
   <ItemGroup>
     <PackageReference Include="log4net" Version="2.0.17" />
+    <PackageReference Include="MailKit" Version="4.15.1" />
     <!-- The application uses OpenCvSharp directly; the Windows meta-package
          also brings WpfExtensions/System.Drawing.Common, which is unused and
          causes .NET 8 reference-assembly version conflicts. -->

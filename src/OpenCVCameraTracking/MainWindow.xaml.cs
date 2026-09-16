@@ -15,10 +15,12 @@ using OpenCVCameraTracking.Core.Recognition;
 using OpenCVCameraTracking.Core.Tracking;
 using OpenCVCameraTracking.Core.Logging;
 using OpenCVCameraTracking.Configuration;
+using OpenCVCameraTracking.Core.Notifications;
 using OpenCVCameraTracking.Localization;
 using Microsoft.Win32;
 using OpenCVCameraTracking.Updates;
 using System.Diagnostics;
+using System.Media;
 
 namespace OpenCVCameraTracking;
 
@@ -27,6 +29,7 @@ public partial class MainWindow : Window
     private ApplicationSettings _settings;
     private readonly WhitelistRecognitionService _whitelistRecognition = new();
     private readonly RecognitionEventStore _recognitionEventStore = new();
+    private readonly NotificationService _notificationService = new();
     private readonly Dictionary<int, string> _recognitionStates = [];
     private readonly List<RecentRecognitionEvent> _recentRecognitionEvents = [];
     private readonly StoreUpdateChecker _storeUpdateChecker = new();
@@ -35,6 +38,7 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer _storeUpdateTimer;
     private bool _storeUpdateCheckRunning;
     private readonly DispatcherTimer _unknownAlertTimer;
+    private readonly DispatcherTimer _restrictedZoneAlertTimer;
     private CameraTrackingEngine? _engine;
     private CameraSourceOptions? _activeSourceOptions;
     private WriteableBitmap? _previewBitmap;
@@ -57,6 +61,15 @@ public partial class MainWindow : Window
         {
             _unknownAlertTimer.Stop();
             UnknownAlertBanner.Visibility = Visibility.Collapsed;
+        };
+        _restrictedZoneAlertTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromSeconds(4)
+        };
+        _restrictedZoneAlertTimer.Tick += (_, _) =>
+        {
+            _restrictedZoneAlertTimer.Stop();
+            RestrictedZoneAlertBanner.Visibility = Visibility.Collapsed;
         };
         _storeUpdateTimer = new DispatcherTimer
         {
@@ -234,12 +247,14 @@ public partial class MainWindow : Window
             _engine = new CameraTrackingEngine(
                 detector,
                 detectionInterval: 1,
-                tracker,
-                _whitelistRecognition);
+                tracker: tracker,
+                whitelistRecognition: _whitelistRecognition,
+                restrictedZone: ToCoreRestrictedZone(_settings.RestrictedZone));
             _engine.FrameReady += EngineOnFrameReady;
             _engine.StatusChanged += EngineOnStatusChanged;
             _engine.SourceStatusChanged += EngineOnSourceStatusChanged;
             _engine.Faulted += EngineOnFaulted;
+            _engine.RestrictedZoneAlerted += EngineOnRestrictedZoneAlerted;
 
             StartButton.IsEnabled = false;
             StopButton.IsEnabled = true;
@@ -460,6 +475,67 @@ public partial class MainWindow : Window
         _ = ObserveBackgroundTaskAsync(operation.Task.Unwrap(), "Tracking fault cleanup failed");
     }
 
+    private void EngineOnRestrictedZoneAlerted(object? sender, RestrictedZoneAlertEventArgs e)
+    {
+        if (_isClosing)
+        {
+            return;
+        }
+
+        _ = Dispatcher.InvokeAsync(() =>
+        {
+            if (_isClosing || !ReferenceEquals(sender, _engine))
+            {
+                return;
+            }
+
+            var subject = e.Target.Label.Equals("cat", StringComparison.OrdinalIgnoreCase)
+                ? LocalizationManager.Get("RestrictedZoneCat")
+                : LocalizationManager.Get("RestrictedZonePerson");
+            var description = LocalizationManager.Format("RestrictedZoneAlert", subject);
+            RestrictedZoneAlertText.Text = description;
+            RestrictedZoneAlertBanner.Visibility = Visibility.Visible;
+            _restrictedZoneAlertTimer.Stop();
+            _restrictedZoneAlertTimer.Start();
+            SystemSounds.Exclamation.Play();
+
+            if (RecognitionLogBox.Items.Count == 1 &&
+                RecognitionLogBox.Items[0] is ListBoxItem placeholder &&
+                !placeholder.IsHitTestVisible)
+            {
+                RecognitionLogBox.Items.Clear();
+            }
+
+            RecognitionLogBox.Items.Insert(
+                0,
+                LocalizationManager.Format("RecognitionEventFormat", e.Timestamp.ToLocalTime(), description));
+            while (RecognitionLogBox.Items.Count > 30)
+            {
+                RecognitionLogBox.Items.RemoveAt(RecognitionLogBox.Items.Count - 1);
+            }
+
+            var notificationBody = LocalizationManager.Format(
+                "RestrictedZoneNotificationBody",
+                description,
+                e.Timestamp.ToLocalTime(),
+                e.Target.Id);
+            var notificationTask = SendAlertNotificationsAsync(
+                NotificationEventCatalog.RestrictedZoneEntered,
+                new NotificationMessage(LocalizationManager.Get("RestrictedZoneNotificationTitle"), notificationBody));
+            _ = ObserveBackgroundTaskAsync(notificationTask, "Restricted-zone notification dispatch failed");
+        });
+    }
+
+    private async Task SendAlertNotificationsAsync(string eventKey, NotificationMessage message)
+    {
+        var results = await _notificationService.SendAlertAsync(_settings.NotificationChannels, message, eventKey);
+        foreach (var delivery in results.Where(delivery => !delivery.Result.Success))
+        {
+            AppLogger.Warn(
+                $"Notification channel failed: kind={delivery.Channel.Kind}, name={delivery.Channel.Name}, detail={delivery.Result.Detail}");
+        }
+    }
+
     private async Task HandleEngineFaultAsync(Exception exception)
     {
         if (_isClosing)
@@ -502,6 +578,7 @@ public partial class MainWindow : Window
             engine.StatusChanged -= EngineOnStatusChanged;
             engine.SourceStatusChanged -= EngineOnSourceStatusChanged;
             engine.Faulted -= EngineOnFaulted;
+            engine.RestrictedZoneAlerted -= EngineOnRestrictedZoneAlerted;
             await engine.DisposeAsync();
         }
 
@@ -514,6 +591,8 @@ public partial class MainWindow : Window
         _latestFrameHeight = 0;
         PreviewImage.Source = null;
         PreviewPlaceholder.Visibility = Visibility.Visible;
+        _restrictedZoneAlertTimer.Stop();
+        RestrictedZoneAlertBanner.Visibility = Visibility.Collapsed;
         MetricsText.Text = LocalizationManager.Format("MetricsFormat", 0d, 0);
     }
 
@@ -527,6 +606,30 @@ public partial class MainWindow : Window
         DetectionModeBox.IsEnabled = enabled;
         AnimalModelBox.IsEnabled = enabled;
         ModelPathBox.IsEnabled = enabled;
+    }
+
+    private RestrictedZoneSettings? SelectRestrictedZoneFromCurrentFrame(Window owner)
+    {
+        if (_previewBitmap is null || _latestFrameWidth <= 0 || _latestFrameHeight <= 0)
+        {
+            MessageBox.Show(owner, LocalizationManager.Get("RestrictedZoneNoFrame"),
+                LocalizationManager.Get("Information"), MessageBoxButton.OK, MessageBoxImage.Information);
+            return null;
+        }
+
+        var window = new RestrictedZoneSelectionWindow(_previewBitmap, _latestFrameWidth, _latestFrameHeight)
+        {
+            Owner = owner
+        };
+        if (window.ShowDialog() != true || window.SelectedRegion is not { } region)
+        {
+            return null;
+        }
+
+        return RestrictedZoneSettings.FromPixelRect(
+            region,
+            _latestFrameWidth,
+            _latestFrameHeight);
     }
 
     private void SourceKindBox_OnSelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -797,7 +900,15 @@ public partial class MainWindow : Window
 
     private void SettingsButton_OnClick(object sender, RoutedEventArgs e)
     {
-        var window = new SettingsWindow(_settings) { Owner = this };
+        var window = new SettingsWindow(
+            _settings,
+            SelectRestrictedZoneFromCurrentFrame,
+            ClearRestrictedZoneImmediately,
+            channel => _notificationService.SendTestAsync(channel),
+            PersistNotificationChannelsImmediately)
+        {
+            Owner = this
+        };
         if (window.ShowDialog() != true)
         {
             return;
@@ -810,6 +921,21 @@ public partial class MainWindow : Window
         LocalizationManager.Apply(_settings.Language);
         ApplySettingsToUi();
         RefreshVersionDisplay(_pendingStoreUpdate);
+    }
+
+    private void ClearRestrictedZoneImmediately()
+    {
+        _settings.RestrictedZone = null;
+        SaveSettings();
+        _engine?.SetRestrictedZone(null);
+        _restrictedZoneAlertTimer.Stop();
+        RestrictedZoneAlertBanner.Visibility = Visibility.Collapsed;
+    }
+
+    private void PersistNotificationChannelsImmediately(IReadOnlyList<NotificationChannelSettings> channels)
+    {
+        _settings.NotificationChannels = channels.Select(channel => channel.DeepClone()).ToList();
+        SaveSettings();
     }
 
     private void WhitelistButton_OnClick(object sender, RoutedEventArgs e)
@@ -919,6 +1045,16 @@ public partial class MainWindow : Window
                 UnknownAlertBanner.Visibility = Visibility.Visible;
                 _unknownAlertTimer.Stop();
                 _unknownAlertTimer.Start();
+
+                var notificationBody = LocalizationManager.Format(
+                    "AlertNotificationBody",
+                    description,
+                    DateTimeOffset.Now,
+                    item.Id);
+                var notificationTask = SendAlertNotificationsAsync(
+                    NotificationEventCatalog.UnknownTargetDetected,
+                    new NotificationMessage(LocalizationManager.Get("UnknownRecognitionNotificationTitle"), notificationBody));
+                _ = ObserveBackgroundTaskAsync(notificationTask, "Unknown-recognition notification dispatch failed");
             }
         }
     }
@@ -979,6 +1115,7 @@ public partial class MainWindow : Window
 
             MetricsText.Text = LocalizationManager.Format("MetricsFormat", 0d, 0);
             UpdateWhitelistSummary();
+            _engine?.SetRestrictedZone(ToCoreRestrictedZone(_settings.RestrictedZone));
         }
         finally
         {
@@ -1025,6 +1162,9 @@ public partial class MainWindow : Window
         AppLogger.Info("Application settings persisted");
     }
 
+    private static RestrictedZone? ToCoreRestrictedZone(RestrictedZoneSettings? settings) =>
+        settings is { IsValid: true } ? settings.ToCore() : null;
+
     private static string SelectedTag(ComboBox comboBox) =>
         (comboBox.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? string.Empty;
 
@@ -1054,6 +1194,7 @@ public partial class MainWindow : Window
         _isClosing = true;
         _storeUpdateTimer.Stop();
         _unknownAlertTimer.Stop();
+        _restrictedZoneAlertTimer.Stop();
         try
         {
             PersistUiSelection();

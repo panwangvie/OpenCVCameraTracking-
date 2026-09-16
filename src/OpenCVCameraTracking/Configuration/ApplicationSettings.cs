@@ -1,5 +1,7 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using OpenCVCameraTracking.Core.Camera;
+using OpenCVCameraTracking.Core.Notifications;
 
 namespace OpenCVCameraTracking.Configuration;
 
@@ -21,11 +23,41 @@ public sealed class ApplicationSettings
     public List<string> MultiPreviewSourceKeys { get; set; } = [];
     public float FaceConfidence { get; set; } = 0.55f;
     public float AnimalConfidence { get; set; } = 0.35f;
+    public RestrictedZoneSettings? RestrictedZone { get; set; }
+    public List<NotificationChannelSettings> NotificationChannels { get; set; } = [];
     public List<StreamProfile> Streams { get; set; } = [];
     public List<CameraDeviceProfile> CameraDevices { get; set; } = [];
 
     public ApplicationSettings DeepClone() =>
         JsonSerializer.Deserialize<ApplicationSettings>(JsonSerializer.Serialize(this)) ?? new ApplicationSettings();
+}
+
+public sealed class RestrictedZoneSettings
+{
+    public double X { get; set; }
+    public double Y { get; set; }
+    public double Width { get; set; }
+    public double Height { get; set; }
+
+    [JsonIgnore]
+    public bool IsValid =>
+        !double.IsNaN(X) && !double.IsInfinity(X) &&
+        !double.IsNaN(Y) && !double.IsInfinity(Y) &&
+        !double.IsNaN(Width) && !double.IsInfinity(Width) &&
+        !double.IsNaN(Height) && !double.IsInfinity(Height) &&
+        X >= 0d && Y >= 0d && Width > 0d && Height > 0d &&
+        X + Width <= 1.001d && Y + Height <= 1.001d;
+
+    public static RestrictedZoneSettings FromPixelRect(OpenCvSharp.Rect region, int frameWidth, int frameHeight) => new()
+    {
+        X = Math.Clamp((double)region.X / frameWidth, 0d, 1d),
+        Y = Math.Clamp((double)region.Y / frameHeight, 0d, 1d),
+        Width = Math.Clamp((double)region.Width / frameWidth, 0d, 1d),
+        Height = Math.Clamp((double)region.Height / frameHeight, 0d, 1d)
+    };
+
+    public OpenCVCameraTracking.Core.RestrictedZone ToCore() =>
+        new((float)X, (float)Y, (float)Width, (float)Height);
 }
 
 public sealed class StreamProfile

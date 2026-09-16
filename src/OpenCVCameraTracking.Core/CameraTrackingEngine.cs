@@ -58,8 +58,11 @@ public sealed class CameraTrackingEngine : IAsyncDisposable
     private readonly WhitelistRecognitionService? _whitelistRecognition;
     private readonly int _detectionInterval;
     private readonly object _latestSnapshotGate = new();
+    private readonly object _restrictedZoneGate = new();
     private Mat? _latestFrame;
     private IReadOnlyList<TrackedObject> _latestObjects = [];
+    private RestrictedZone? _restrictedZone;
+    private HashSet<int> _restrictedZoneTrackIds = [];
     private CancellationTokenSource? _cancellation;
     private Task? _worker;
     private bool _disposed;
@@ -68,20 +71,23 @@ public sealed class CameraTrackingEngine : IAsyncDisposable
         IObjectDetector detector,
         int detectionInterval = 2,
         IouMultiObjectTracker? tracker = null,
-        WhitelistRecognitionService? whitelistRecognition = null)
+        WhitelistRecognitionService? whitelistRecognition = null,
+        RestrictedZone? restrictedZone = null)
     {
         _detector = detector;
         _detectionInterval = Math.Max(1, detectionInterval);
         _tracker = tracker ?? new IouMultiObjectTracker();
         _whitelistRecognition = whitelistRecognition;
+        _restrictedZone = restrictedZone?.IsValid == true ? restrictedZone : null;
     }
 
     public CameraTrackingEngine(
         IEnumerable<IObjectDetector> detectors,
         int detectionInterval = 2,
         IouMultiObjectTracker? tracker = null,
-        WhitelistRecognitionService? whitelistRecognition = null)
-        : this(new CompositeObjectDetector(detectors), detectionInterval, tracker, whitelistRecognition)
+        WhitelistRecognitionService? whitelistRecognition = null,
+        RestrictedZone? restrictedZone = null)
+        : this(new CompositeObjectDetector(detectors), detectionInterval, tracker, whitelistRecognition, restrictedZone)
     {
     }
 
@@ -89,8 +95,27 @@ public sealed class CameraTrackingEngine : IAsyncDisposable
     public event EventHandler<string>? StatusChanged;
     public event EventHandler<VideoSourceStatusEventArgs>? SourceStatusChanged;
     public event EventHandler<Exception>? Faulted;
+    public event EventHandler<RestrictedZoneAlertEventArgs>? RestrictedZoneAlerted;
 
     public bool IsRunning => _worker is { IsCompleted: false };
+
+    public RestrictedZone? GetRestrictedZone()
+    {
+        lock (_restrictedZoneGate)
+        {
+            return _restrictedZone;
+        }
+    }
+
+    /// <summary>Updates the zone without requiring the video source to restart.</summary>
+    public void SetRestrictedZone(RestrictedZone? zone)
+    {
+        lock (_restrictedZoneGate)
+        {
+            _restrictedZone = zone?.IsValid == true ? zone : null;
+            _restrictedZoneTrackIds = [];
+        }
+    }
 
     /// <summary>
     /// Opens a source and reads one frame without starting tracking. This is used by
@@ -479,7 +504,14 @@ public sealed class CameraTrackingEngine : IAsyncDisposable
             objects = _whitelistRecognition.Recognize(frame, objects);
         }
 
+        var restrictedZone = GetRestrictedZone();
+        var pixelZone = restrictedZone?.ToPixelRect(frame.Width, frame.Height);
+        var restrictedZoneTargets = UpdateRestrictedZoneState(objects, pixelZone, capturedAt);
         UpdateLatestSnapshot(frame, objects);
+        if (pixelZone is { } zone)
+        {
+            DrawRestrictedZone(frame, zone, restrictedZoneTargets.Count > 0);
+        }
         DrawTracks(frame, objects);
         if (fpsTimer.ElapsedMilliseconds >= 1_000)
         {
@@ -489,6 +521,75 @@ public sealed class CameraTrackingEngine : IAsyncDisposable
         }
 
         RaiseFrame(frame, objects, measuredFps, capturedAt);
+    }
+
+    private IReadOnlyList<TrackedObject> UpdateRestrictedZoneState(
+        IReadOnlyList<TrackedObject> objects,
+        Rect? pixelZone,
+        DateTimeOffset capturedAt)
+    {
+        if (pixelZone is not { } zone)
+        {
+            lock (_restrictedZoneGate)
+            {
+                _restrictedZoneTrackIds = [];
+            }
+
+            return [];
+        }
+
+        var targets = objects
+            .Where(IsRestrictedZoneTarget)
+            .Where(item => IsInsideRestrictedZone(item.Box, zone))
+            .ToArray();
+        var currentIds = targets.Select(item => item.Id).ToHashSet();
+        List<TrackedObject> entered;
+        lock (_restrictedZoneGate)
+        {
+            entered = targets
+                .Where(item => !_restrictedZoneTrackIds.Contains(item.Id))
+                .ToList();
+            _restrictedZoneTrackIds = currentIds;
+        }
+
+        foreach (var target in entered)
+        {
+            try
+            {
+                RestrictedZoneAlerted?.Invoke(
+                    this,
+                    new RestrictedZoneAlertEventArgs(target, zone, capturedAt));
+            }
+            catch (Exception exception)
+            {
+                // An alert sink must never stop camera processing.
+                AppLogger.Error("Restricted-zone alert handler failed", exception);
+            }
+        }
+
+        return targets;
+    }
+
+    private static bool IsRestrictedZoneTarget(TrackedObject item) =>
+        item.Label.Equals("cat", StringComparison.OrdinalIgnoreCase) ||
+        item.Label.Equals("face", StringComparison.OrdinalIgnoreCase) ||
+        item.Label.Equals("person", StringComparison.OrdinalIgnoreCase) ||
+        item.Label.Equals("human", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsInsideRestrictedZone(Rect target, Rect zone)
+    {
+        var centre = new Point(
+            target.X + target.Width / 2,
+            target.Y + target.Height / 2);
+        if (zone.Contains(centre))
+        {
+            return true;
+        }
+
+        var intersection = target & zone;
+        var intersectionArea = Math.Max(0, intersection.Width) * Math.Max(0, intersection.Height);
+        var targetArea = Math.Max(1, target.Width * target.Height);
+        return intersectionArea * 5 >= targetArea;
     }
 
     private VideoCapture OpenCaptureWithRetry(
@@ -681,6 +782,25 @@ public sealed class CameraTrackingEngine : IAsyncDisposable
                 1,
                 LineTypes.AntiAlias);
         }
+    }
+
+    private static void DrawRestrictedZone(Mat frame, Rect zone, bool occupied)
+    {
+        var color = occupied
+            ? new Scalar(55, 55, 235)
+            : new Scalar(0, 180, 255);
+        Cv2.Rectangle(frame, zone, color, 3, LineTypes.AntiAlias);
+        var caption = occupied ? "RESTRICTED ZONE - ALERT" : "RESTRICTED ZONE";
+        var textOrigin = new Point(zone.X + 6, Math.Max(24, zone.Y + 24));
+        Cv2.PutText(
+            frame,
+            caption,
+            textOrigin,
+            HersheyFonts.HersheySimplex,
+            0.65,
+            color,
+            2,
+            LineTypes.AntiAlias);
     }
 
     private static int IntersectionArea(Rect first, Rect second)
