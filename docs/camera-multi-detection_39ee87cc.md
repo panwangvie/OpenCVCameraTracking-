@@ -18,6 +18,8 @@ todos:
   - id: ui-resources
     content: MainWindow.xaml 新增"人+动物"下拉项并补充中英文语言资源
     status: completed
+    dependencies:
+      - mainwindow-mode
   - id: docs-verify
     content: 更新 README 说明，运行 dotnet build 与格式检查验证
     status: completed
