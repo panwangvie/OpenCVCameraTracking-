@@ -30,6 +30,8 @@
     <DefaultLanguage>zh-CN</DefaultLanguage>
     <StoreIdentityPath>$(MSBuildProjectDirectory)</StoreIdentityPath>
     <UseLocalPackageSigning Condition="'$(UseLocalPackageSigning)' == ''">false</UseLocalPackageSigning>
+    <DisableImplicitUCRTReference>true</DisableImplicitUCRTReference>
+    <AddMicrosoftUniversalCRTDebugSDKReference>false</AddMicrosoftUniversalCRTDebugSDKReference>
     <AppxPackageSigningEnabled>false</AppxPackageSigningEnabled>
     <AppxPackageSigningEnabled Condition="'$(UseLocalPackageSigning)' == 'true'">true</AppxPackageSigningEnabled>
     <PackageCertificateKeyFile Condition="'$(UseLocalPackageSigning)' == 'true'">$(StoreIdentityPath)\$(LocalSigningCertificatePath)</PackageCertificateKeyFile>
@@ -56,6 +58,17 @@
   </ItemGroup>
 
   <Import Project="$(WapProjPath)\Microsoft.DesktopBridge.targets" />
+
+  <!--
+    Windows App SDK adds Microsoft.UniversalCRT.Debug to WAP projects during
+    Debug builds.  This optional UCRT debug Extension SDK is not installed on
+    every developer machine and is not required by this self-contained WPF
+    package.  Keep the VCLibs references, but remove only the unavailable
+    UCRT debug item after all imported targets have been evaluated.
+  -->
+  <ItemGroup>
+    <SDKReference Remove="Microsoft.UniversalCRT.Debug, Version=$(TargetPlatformVersion)" />
+  </ItemGroup>
 
   <!--
     The app project uses WindowsAppSDKSelfContained=true, so the Windows App

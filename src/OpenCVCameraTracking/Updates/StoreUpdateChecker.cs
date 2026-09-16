@@ -1,5 +1,7 @@
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.WindowsRuntime;
+using System.Text;
 using Windows.ApplicationModel;
 using Windows.Services.Store;
 using OpenCVCameraTracking.Core.Logging;
@@ -14,21 +16,25 @@ public sealed record StoreUpdateInfo(Version CurrentVersion, Version AvailableVe
 /// </summary>
 public sealed class StoreUpdateChecker
 {
+    private const int ErrorInsufficientBuffer = 122;
+    private const int AppModelErrorNoPackage = 15700;
     private const string StoreSearchUrl = "ms-windows-store://search/?query=CameraTracking";
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = false)]
+    private static extern int GetCurrentPackagePath(ref uint packagePathLength, StringBuilder? packagePath);
 
     public async Task<StoreUpdateInfo?> CheckAsync(CancellationToken cancellationToken = default)
     {
         if (!HasPackageIdentity())
         {
-            // F5/debug and portable runs cannot query a Store entitlement.
             AppLogger.Info("Microsoft Store update check skipped because the app has no package identity.");
             return null;
         }
 
+        var current = GetCurrentVersion();
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var current = GetCurrentVersion();
             var context = StoreContext.GetDefault();
 
             // The Store API is the source of truth: a package in Partner Center that is
@@ -74,13 +80,15 @@ public sealed class StoreUpdateChecker
         return version ?? new Version(1, 0, 0, 0);
     }
 
-    private static bool HasPackageIdentity()
-    {
-        return TryGetCurrentPackageVersion() is not null;
-    }
-
     private static Version? TryGetCurrentPackageVersion()
     {
+        // Unpackaged launches do not have Package.Current.  Check the package
+        // identity through the AppModel API before accessing it.
+        if (!HasPackageIdentity())
+        {
+            return null;
+        }
+
         try
         {
             return ToVersion(Package.Current.Id.Version);
@@ -89,6 +97,21 @@ public sealed class StoreUpdateChecker
         {
             return null;
         }
+    }
+
+    private static bool HasPackageIdentity()
+    {
+        uint pathLength = 0;
+        var result = GetCurrentPackagePath(ref pathLength, null);
+
+        // A packaged process returns ERROR_INSUFFICIENT_BUFFER for the size-only
+        // query.  An unpackaged process returns APPMODEL_ERROR_NO_PACKAGE.
+        if (result == AppModelErrorNoPackage)
+        {
+            return false;
+        }
+
+        return result == ErrorInsufficientBuffer || result == 0;
     }
 
     private static Version ToVersion(PackageVersion version) =>
