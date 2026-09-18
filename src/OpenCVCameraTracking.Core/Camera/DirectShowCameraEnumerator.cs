@@ -40,8 +40,8 @@ public static class DirectShowCameraEnumerator
                     {
                         object value = string.Empty;
                         var name = propertyBag.Read("FriendlyName", ref value, IntPtr.Zero) == 0
-                            ? Convert.ToString(value) ?? $"摄像头 {index}"
-                            : $"摄像头 {index}";
+                            ? Convert.ToString(value) ?? string.Empty
+                            : string.Empty;
                         devices.Add(new CameraDeviceInfo(index++, name));
                     }
                     finally

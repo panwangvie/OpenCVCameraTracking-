@@ -184,7 +184,7 @@ public sealed class CameraTrackingEngine : IAsyncDisposable
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (IsRunning)
         {
-            throw new InvalidOperationException("The camera tracking engine is already running.");
+            throw new CoreException(CoreErrorCode.EngineAlreadyRunning);
         }
 
         Validate(options);
@@ -618,7 +618,7 @@ public sealed class CameraTrackingEngine : IAsyncDisposable
         }
 
         cancellationToken.ThrowIfCancellationRequested();
-        throw new InvalidOperationException("Video source opening was cancelled.");
+        throw new CoreException(CoreErrorCode.SourceOpenCancelled);
     }
 
     private static VideoCapture OpenCapture(CameraSourceOptions options)
@@ -649,7 +649,7 @@ public sealed class CameraTrackingEngine : IAsyncDisposable
         if (!capture.IsOpened())
         {
             capture.Dispose();
-            throw new InvalidOperationException("Unable to open the video source. Check the device, URL, credentials and network.");
+            throw new CoreException(CoreErrorCode.SourceOpenFailed);
         }
 
         capture.Set(VideoCaptureProperties.BufferSize, 1);
@@ -904,7 +904,7 @@ public sealed class CameraTrackingEngine : IAsyncDisposable
     {
         if (options.Kind != CameraSourceKind.Device && string.IsNullOrWhiteSpace(options.Address))
         {
-            throw new ArgumentException("A network stream or video file requires an address.", nameof(options));
+            throw new CoreException(CoreErrorCode.SourceAddressRequired);
         }
     }
 
@@ -953,7 +953,7 @@ public sealed class CameraTrackingEngine : IAsyncDisposable
                     {
                         if (_error is not null)
                         {
-                            throw new InvalidOperationException("RTSP reader failed.", _error);
+                            throw new CoreException(CoreErrorCode.RtspReaderFailed, _error);
                         }
 
                         return null;

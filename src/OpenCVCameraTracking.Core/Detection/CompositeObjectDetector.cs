@@ -22,7 +22,7 @@ public sealed class CompositeObjectDetector : IObjectDetector
         _detectors = detectors.ToArray();
         if (_detectors.Count == 0)
         {
-            throw new ArgumentException("At least one detector is required.", nameof(detectors));
+            throw new CoreException(CoreErrorCode.CompositeDetectorRequired);
         }
 
         _nmsThreshold = nmsThreshold;

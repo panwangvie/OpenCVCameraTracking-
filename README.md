@@ -4,7 +4,7 @@
   <img src="src/OpenCVCameraTracking/Assets/AppIcon.png" alt="OpenCVCameraTracking icon" width="180" />
 </p>
 
-> **v1.0.6.0 / 版本 1.0.6.0** — 使用自包含 Windows App SDK 运行库，修复目标电脑未安装 Windows App Runtime 时的启动问题；Microsoft Store 更新提醒仍在启动时及持续运行期间每 30 分钟检查一次。Uses a self-contained Windows App SDK runtime to avoid startup failures on machines without Windows App Runtime; the Microsoft Store update reminder checks at startup and every 30 minutes while the app is running.
+> **v1.0.7.0 / 版本 1.0.7.0** — 增加禁区识别、可配置消息通知和完整的中英文界面支持。Adds restricted-zone detection, configurable event notifications, and complete Chinese/English UI support.
 
 基于 `.NET 8 + WPF + OpenCvSharp` 的实时摄像头组件。核心采集、检测和跟踪逻辑位于
 `OpenCVCameraTracking.Core`，WPF 界面与设置管理位于 `OpenCVCameraTracking`。
@@ -54,6 +54,28 @@ dotnet run --project src/OpenCVCameraTracking/OpenCVCameraTracking.csproj
 主窗口左侧显示当前程序版本。已通过 Microsoft Store 安装的 MSIX 包会在启动时，以及程序持续运行期间每 30 分钟，通过 Windows 的 `StoreContext` 查询该账户实际可获得的更新；仅当新包已由 Microsoft Store 发布并可用时，才会在预览区右上角显示更新卡片。点击按钮会打开 Microsoft Store；用户关闭提示后，本次运行不再提醒，重启应用后仍会重新检查。Partner Center 中“正在认证”或尚未发布的包不会触发提示。
 
 仓库根目录的 `update-manifest.json` 仅为早期版本的兼容清单，不再作为当前版本的正式更新来源；请勿根据它发布或判断商店版本。
+
+### 1.0.7.0 商店更新说明 / Store release notes
+
+**中文（简体）**
+
+- 新增禁区识别与告警：可在相机画面中绘制禁区，检测到人或猫进入时显示告警并播放提示音。
+- 清除禁区增加二次确认，确认后立即清除并保存，无需再次点击设置窗口底部的保存按钮。
+- 新增 Server酱、飞书机器人 Webhook、SMTP 邮件和 Telegram Bot 消息通知渠道。
+- 每个通知渠道可以单独选择发送事件；未选择任何事件时不会发送通知。
+- 支持通知渠道新增、双击编辑、删除确认，并在操作后立即保存。
+- 完善中英文界面、通知文案、错误提示和设置显示。
+- 优化通知设置和多路预览在 1080p 等较小显示区域下的显示与滚动体验。
+
+**English (United States)**
+
+- Added restricted-zone detection and alerts. Draw a zone on the camera view; an alert and notification sound are triggered when a person or cat enters it.
+- Added a second confirmation when clearing a restricted zone. The zone is cleared and saved immediately after confirmation, without requiring another click on the Settings window's Save button.
+- Added notification channels for ServerChan, Feishu bot Webhooks, SMTP email, and Telegram Bot.
+- Each notification channel can select its own events; no selected events means no notification is sent.
+- Added channel creation, double-click editing, delete confirmation, and immediate persistence after each operation.
+- Improved Chinese/English localization across the interface, notification content, error messages, and settings.
+- Improved notification settings and multi-camera preview layout and scrolling on 1080p and other smaller displays.
 
 ### 1.0.6.0 商店更新说明 / Store release notes
 

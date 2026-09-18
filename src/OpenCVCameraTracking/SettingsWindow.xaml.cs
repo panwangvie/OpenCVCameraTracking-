@@ -361,7 +361,7 @@ public partial class SettingsWindow : Window
         catch (Exception exception)
         {
             AppLogger.Error("ONVIF discovery failed", exception);
-            MessageBox.Show(this, exception.Message, LocalizationManager.Get("Information"), MessageBoxButton.OK, MessageBoxImage.Error);
+            ShowInformation("OnvifDiscoveryFailed", MessageBoxImage.Error);
         }
     }
 
@@ -448,7 +448,7 @@ public partial class SettingsWindow : Window
         catch (Exception exception)
         {
             AppLogger.Warn($"ONVIF PTZ command failed: {exception.Message}");
-            MessageBox.Show(this, exception.Message, LocalizationManager.Get("Information"), MessageBoxButton.OK, MessageBoxImage.Error);
+            ShowInformation("OnvifPtzCommandFailed", MessageBoxImage.Error);
         }
     }
 
@@ -503,13 +503,13 @@ public partial class SettingsWindow : Window
 
     private void CancelButton_OnClick(object sender, RoutedEventArgs e) => DialogResult = false;
 
-    private void ShowInformation(string resourceKey) =>
+    private void ShowInformation(string resourceKey, MessageBoxImage image = MessageBoxImage.Information) =>
         MessageBox.Show(
             this,
             LocalizationManager.Get(resourceKey),
             LocalizationManager.Get("Information"),
             MessageBoxButton.OK,
-            MessageBoxImage.Information);
+            image);
 
     private static string SelectedTag(ComboBox comboBox) =>
         (comboBox.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "zh-CN";

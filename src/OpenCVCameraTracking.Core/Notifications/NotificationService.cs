@@ -14,14 +14,9 @@ public sealed class NotificationService
 
     public async Task<NotificationSendResult> SendTestAsync(
         NotificationChannelSettings channel,
+        NotificationMessage message,
         CancellationToken cancellationToken = default)
-    {
-        var message = new NotificationMessage(
-            "OpenCVCameraTracking 测试通知",
-            "这是一条测试通知。如果你能看到它，说明当前通知渠道配置正确。\n发送时间：" +
-            DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm:ss"));
-        return await SendAsync(channel, message, cancellationToken);
-    }
+        => await SendAsync(channel, message, cancellationToken);
 
     public async Task<IReadOnlyList<NotificationDeliveryResult>> SendAlertAsync(
         IEnumerable<NotificationChannelSettings> channels,
@@ -58,16 +53,20 @@ public sealed class NotificationService
                 NotificationChannelKind.Feishu => await SendFeishuAsync(channel, message, cancellationToken),
                 NotificationChannelKind.Email => await SendEmailAsync(channel, message, cancellationToken),
                 NotificationChannelKind.Telegram => await SendTelegramAsync(channel, message, cancellationToken),
-                _ => NotificationSendResult.Failed("不支持的通知类型")
+                _ => NotificationSendResult.Failed(NotificationResultCode.UnsupportedType)
             };
         }
         catch (OperationCanceledException)
         {
-            return NotificationSendResult.Failed("发送超时或已取消");
+            return NotificationSendResult.Failed(NotificationResultCode.SendCanceled);
+        }
+        catch (NotificationException exception)
+        {
+            return NotificationSendResult.Failed(exception.Code, exception.Arguments);
         }
         catch (Exception exception)
         {
-            return NotificationSendResult.Failed(GetSafeErrorMessage(exception));
+            return GetSafeErrorResult(exception);
         }
     }
 
@@ -76,14 +75,14 @@ public sealed class NotificationService
         NotificationMessage message,
         CancellationToken cancellationToken)
     {
-        var sendKey = Require(channel.ServerChanSendKey, "Server酱 SendKey");
+        var sendKey = Require(channel.ServerChanSendKey, NotificationResultCode.ServerChanKeyRequired);
         string endpoint;
         if (sendKey.StartsWith("sctp", StringComparison.OrdinalIgnoreCase))
         {
             var separatorIndex = sendKey.IndexOf('t', 4);
             if (separatorIndex <= 4)
             {
-                throw new InvalidOperationException("Server酱 SC3 SendKey 格式不正确");
+                throw new NotificationException(NotificationResultCode.ServerChanSc3Invalid);
             }
 
             var uid = sendKey[4..separatorIndex];
@@ -103,12 +102,14 @@ public sealed class NotificationService
         var error = await GetApiErrorAsync(response, cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
-            return NotificationSendResult.Failed(error ?? $"HTTP {(int)response.StatusCode}");
+            return error is null
+                ? NotificationSendResult.Failed(NotificationResultCode.HttpError, (int)response.StatusCode)
+                : NotificationSendResult.Failed(NotificationResultCode.RemoteError, error);
         }
 
         return error is null
-            ? NotificationSendResult.Succeeded("Server酱发送成功")
-            : NotificationSendResult.Failed(error);
+            ? NotificationSendResult.Succeeded(NotificationResultCode.ServerChanSent)
+            : NotificationSendResult.Failed(NotificationResultCode.RemoteError, error);
     }
 
     private static async Task<NotificationSendResult> SendFeishuAsync(
@@ -116,7 +117,7 @@ public sealed class NotificationService
         NotificationMessage message,
         CancellationToken cancellationToken)
     {
-        var webhookUrl = Require(channel.FeishuWebhookUrl, "飞书 Webhook 地址");
+        var webhookUrl = Require(channel.FeishuWebhookUrl, NotificationResultCode.FeishuWebhookRequired);
         var payload = new Dictionary<string, object?>
         {
             ["msg_type"] = "text",
@@ -139,12 +140,14 @@ public sealed class NotificationService
         var error = await GetApiErrorAsync(response, cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
-            return NotificationSendResult.Failed(error ?? $"HTTP {(int)response.StatusCode}");
+            return error is null
+                ? NotificationSendResult.Failed(NotificationResultCode.HttpError, (int)response.StatusCode)
+                : NotificationSendResult.Failed(NotificationResultCode.RemoteError, error);
         }
 
         return error is null
-            ? NotificationSendResult.Succeeded("飞书发送成功")
-            : NotificationSendResult.Failed(error);
+            ? NotificationSendResult.Succeeded(NotificationResultCode.FeishuSent)
+            : NotificationSendResult.Failed(NotificationResultCode.RemoteError, error);
     }
 
     private static async Task<NotificationSendResult> SendEmailAsync(
@@ -152,15 +155,15 @@ public sealed class NotificationService
         NotificationMessage message,
         CancellationToken cancellationToken)
     {
-        var host = Require(channel.SmtpHost, "SMTP 服务器");
+        var host = Require(channel.SmtpHost, NotificationResultCode.SmtpHostRequired);
         var from = Require(
             string.IsNullOrWhiteSpace(channel.MailFrom) ? channel.SmtpUsername : channel.MailFrom,
-            "发件人地址");
+            NotificationResultCode.MailFromRequired);
         var recipients = channel.MailTo
             .Split([',', ';', '\n', '\r'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         if (recipients.Length == 0)
         {
-            throw new InvalidOperationException("收件人地址不能为空");
+            throw new NotificationException(NotificationResultCode.MailToRequired);
         }
 
         var mail = new MimeMessage();
@@ -186,7 +189,7 @@ public sealed class NotificationService
 
         await client.SendAsync(mail, cancellationToken);
         await client.DisconnectAsync(true, cancellationToken);
-        return NotificationSendResult.Succeeded("邮件发送成功");
+        return NotificationSendResult.Succeeded(NotificationResultCode.EmailSent);
     }
 
     private static async Task<NotificationSendResult> SendTelegramAsync(
@@ -194,8 +197,8 @@ public sealed class NotificationService
         NotificationMessage message,
         CancellationToken cancellationToken)
     {
-        var botToken = Require(channel.TelegramBotToken, "Telegram Bot Token");
-        var chatId = Require(channel.TelegramChatId, "Telegram Chat ID");
+        var botToken = Require(channel.TelegramBotToken, NotificationResultCode.TelegramBotTokenRequired);
+        var chatId = Require(channel.TelegramChatId, NotificationResultCode.TelegramChatIdRequired);
         var endpoint = $"https://api.telegram.org/bot{Uri.EscapeDataString(botToken)}/sendMessage";
         var text = $"{message.Title}\n\n{message.Body}";
         if (text.Length > 4096)
@@ -211,12 +214,14 @@ public sealed class NotificationService
         var error = await GetApiErrorAsync(response, cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
-            return NotificationSendResult.Failed(error ?? $"HTTP {(int)response.StatusCode}");
+            return error is null
+                ? NotificationSendResult.Failed(NotificationResultCode.HttpError, (int)response.StatusCode)
+                : NotificationSendResult.Failed(NotificationResultCode.RemoteError, error);
         }
 
         return error is null
-            ? NotificationSendResult.Succeeded("Telegram 发送成功")
-            : NotificationSendResult.Failed(error);
+            ? NotificationSendResult.Succeeded(NotificationResultCode.TelegramSent)
+            : NotificationSendResult.Failed(NotificationResultCode.RemoteError, error);
     }
 
     private static async Task<string?> GetApiErrorAsync(HttpResponseMessage response, CancellationToken cancellationToken)
@@ -229,36 +234,38 @@ public sealed class NotificationService
             if (root.TryGetProperty("ok", out var ok) && ok.ValueKind == JsonValueKind.False)
             {
                 return root.TryGetProperty("description", out var description)
-                    ? description.GetString() ?? "远程服务返回失败"
-                    : "远程服务返回失败";
+                    ? description.GetString()
+                    : null;
             }
 
             if (root.TryGetProperty("code", out var code) && code.ValueKind == JsonValueKind.Number && code.GetInt32() != 0)
             {
                 return root.TryGetProperty("message", out var message)
-                    ? message.GetString() ?? $"远程服务返回错误码 {code.GetInt32()}"
-                    : $"远程服务返回错误码 {code.GetInt32()}";
+                    ? message.GetString()
+                    : null;
             }
 
             return null;
         }
         catch (JsonException)
         {
-            return response.IsSuccessStatusCode ? null : "远程服务返回了无法识别的响应";
+            return null;
         }
     }
 
-    private static string Require(string? value, string name) =>
+    private static string Require(string? value, NotificationResultCode code) =>
         string.IsNullOrWhiteSpace(value)
-            ? throw new InvalidOperationException($"{name}不能为空")
+            ? throw new NotificationException(code)
             : value.Trim();
 
-    private static string GetSafeErrorMessage(Exception exception) => exception switch
+    private static NotificationSendResult GetSafeErrorResult(Exception exception) => exception switch
     {
-        FormatException => "地址或账号格式不正确",
-        HttpRequestException => "网络连接失败",
-        AuthenticationException => "服务器认证失败",
-        _ => string.IsNullOrWhiteSpace(exception.Message) ? "发送失败" : exception.Message
+        FormatException => NotificationSendResult.Failed(NotificationResultCode.AddressOrAccountInvalid),
+        HttpRequestException => NotificationSendResult.Failed(NotificationResultCode.NetworkFailed),
+        AuthenticationException => NotificationSendResult.Failed(NotificationResultCode.AuthenticationFailed),
+        _ when string.IsNullOrWhiteSpace(exception.Message) =>
+            NotificationSendResult.Failed(NotificationResultCode.SendFailed),
+        _ => new NotificationSendResult(false, exception.Message, NotificationResultCode.SendFailed)
     };
 
     private static HttpClient CreateHttpClient() => new()

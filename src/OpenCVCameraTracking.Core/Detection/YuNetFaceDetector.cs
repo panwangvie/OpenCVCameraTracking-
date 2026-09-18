@@ -24,7 +24,7 @@ public sealed class YuNetFaceDetector : IObjectDetector
     {
         if (!File.Exists(modelFile))
         {
-            throw new FileNotFoundException("YuNet face model was not found.", modelFile);
+            throw new CoreException(CoreErrorCode.YuNetModelNotFound, modelFile);
         }
 
         _inputWidth = inputWidth;
@@ -39,7 +39,7 @@ public sealed class YuNetFaceDetector : IObjectDetector
             5_000,
             Backend.OPENCV,
             Target.CPU)
-            ?? throw new InvalidOperationException($"Unable to load YuNet face model: {modelFile}");
+            ?? throw new CoreException(CoreErrorCode.YuNetModelLoadFailed, modelFile);
         AppLogger.Info($"YuNet detector loaded: input={inputWidth}x{inputHeight}, confidence={confidenceThreshold:0.00}");
     }
 

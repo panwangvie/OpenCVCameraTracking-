@@ -67,7 +67,7 @@ public partial class NotificationEditorWindow : Window
         {
             var toggle = new ToggleButton
             {
-                Content = LocalizationManager.Get(definition.DisplayNameResourceKey),
+                Content = LocalizationManager.GetNotificationEventName(definition.Key),
                 Tag = definition.Key,
                 IsChecked = Result.EventKeys.Contains(definition.Key, StringComparer.OrdinalIgnoreCase),
                 Margin = new Thickness(0, 0, 8, 8),
@@ -121,9 +121,10 @@ public partial class NotificationEditorWindow : Window
         try
         {
             var result = await _testNotification(channel);
+            var detail = LocalizationManager.GetNotificationResultMessage(result);
             TestStatusText.Text = result.Success
-                ? LocalizationManager.Format("NotificationTestSuccess", result.Detail)
-                : LocalizationManager.Format("NotificationTestFailed", result.Detail);
+                ? LocalizationManager.Format("NotificationTestSuccess", detail)
+                : LocalizationManager.Format("NotificationTestFailed", detail);
             TestStatusText.Foreground = result.Success
                 ? System.Windows.Media.Brushes.LightGreen
                 : System.Windows.Media.Brushes.Orange;

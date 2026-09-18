@@ -195,7 +195,11 @@ public partial class MainWindow : Window
         StatusText.Text = LocalizationManager.Get("Status_Enumerating");
         try
         {
-            var devices = await Task.Run(DirectShowCameraEnumerator.GetVideoInputDevices);
+            var devices = (await Task.Run(DirectShowCameraEnumerator.GetVideoInputDevices))
+                .Select(device => string.IsNullOrWhiteSpace(device.Name)
+                    ? device with { Name = LocalizationManager.Format("CameraIndex", device.Index) }
+                    : device)
+                .ToList();
             var configured = devices.Select(device =>
             {
                 var profile = _settings.CameraDevices.FirstOrDefault(item => item.DeviceIndex == device.Index);
@@ -229,7 +233,9 @@ public partial class MainWindow : Window
         }
         catch (Exception exception)
         {
-            StatusText.Text = LocalizationManager.Format("Status_EnumerationFailed", exception.Message);
+            StatusText.Text = LocalizationManager.Format(
+                "Status_EnumerationFailed",
+                LocalizationManager.GetExceptionMessage(exception));
         }
     }
 
@@ -269,7 +275,7 @@ public partial class MainWindow : Window
             await StopEngineAsync();
             MessageBox.Show(
                 this,
-                exception.Message,
+                LocalizationManager.GetExceptionMessage(exception),
                 LocalizationManager.Get("UnableToStart"),
                 MessageBoxButton.OK,
                 MessageBoxImage.Error);
@@ -293,7 +299,9 @@ public partial class MainWindow : Window
         catch (Exception exception)
         {
             AppLogger.Error("Manual video source reconnect failed", exception);
-            StatusText.Text = LocalizationManager.Format("Status_Error", exception.Message);
+            StatusText.Text = LocalizationManager.Format(
+                "Status_Error",
+                LocalizationManager.GetExceptionMessage(exception));
         }
     }
 
@@ -315,7 +323,7 @@ public partial class MainWindow : Window
                     _settings.FaceConfidence),
                 CreateAnimalDetector()
             ]),
-            _ => throw new InvalidOperationException("Unknown detection mode.")
+            _ => throw new InvalidOperationException(LocalizationManager.Get("UnknownDetectionMode"))
         };
     }
 
@@ -458,7 +466,7 @@ public partial class MainWindow : Window
 
             if (!string.IsNullOrWhiteSpace(e.Detail))
             {
-                status += $" {e.Detail}";
+                status += $" {LocalizationManager.GetOrOriginal(e.Detail)}";
             }
 
             StatusText.Text = status;
@@ -544,7 +552,7 @@ public partial class MainWindow : Window
         }
 
         AppLogger.Error("Tracking engine reported a fault", exception);
-        var message = exception.InnerException?.Message ?? exception.Message;
+        var message = LocalizationManager.GetExceptionMessage(exception.InnerException ?? exception);
         StatusText.Text = LocalizationManager.Format("Status_Error", message);
         MessageBox.Show(
             this,
@@ -703,13 +711,19 @@ public partial class MainWindow : Window
             var result = await engine.DiagnoseAsync(CreateSourceOptions(), timeout.Token);
             var detail = result.Success
                 ? $"{result.Width}×{result.Height}, {result.OpenDuration.TotalMilliseconds:F0} ms, {result.Backend}"
-                : result.Detail ?? result.Status;
+                : result.Status == "ReadFailed"
+                    ? LocalizationManager.Get("SourceReadFailed")
+                    : result.Status == "OpenFailed" && string.IsNullOrWhiteSpace(result.Detail)
+                        ? LocalizationManager.Get("SourceOpenFailed")
+                        : LocalizationManager.GetOrOriginal(result.Detail ?? result.Status);
             StatusText.Text = LocalizationManager.Format(
                 result.Success ? "Status_DiagnosticOk" : "Status_DiagnosticFailed", detail);
         }
         catch (Exception exception)
         {
-            StatusText.Text = LocalizationManager.Format("Status_DiagnosticFailed", exception.Message);
+            StatusText.Text = LocalizationManager.Format(
+                "Status_DiagnosticFailed",
+                LocalizationManager.GetExceptionMessage(exception));
             AppLogger.Error("Video source diagnostic failed", exception);
         }
     }
@@ -904,7 +918,7 @@ public partial class MainWindow : Window
             _settings,
             SelectRestrictedZoneFromCurrentFrame,
             ClearRestrictedZoneImmediately,
-            channel => _notificationService.SendTestAsync(channel),
+            SendTestNotificationAsync,
             PersistNotificationChannelsImmediately)
         {
             Owner = this
@@ -917,11 +931,19 @@ public partial class MainWindow : Window
         _settings = window.Result;
         AppLogger.Info($"User saved settings: language={_settings.Language}, sourceKind={_settings.SelectedSourceKind}");
         ((App)Application.Current).Settings = _settings;
-        SettingsStore.Save(_settings);
         LocalizationManager.Apply(_settings.Language);
+        SettingsStore.ApplyLocalizedDefaults(_settings);
+        SettingsStore.Save(_settings);
         ApplySettingsToUi();
         RefreshVersionDisplay(_pendingStoreUpdate);
     }
+
+    private Task<NotificationSendResult> SendTestNotificationAsync(NotificationChannelSettings channel) =>
+        _notificationService.SendTestAsync(
+            channel,
+            new NotificationMessage(
+                LocalizationManager.Get("NotificationTestTitle"),
+                LocalizationManager.Format("NotificationTestBody", DateTimeOffset.Now)));
 
     private void ClearRestrictedZoneImmediately()
     {

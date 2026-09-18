@@ -12,13 +12,13 @@ public sealed class HaarFaceDetector : IObjectDetector
     {
         if (!File.Exists(cascadeFile))
         {
-            throw new FileNotFoundException("找不到人脸级联模型。", cascadeFile);
+            throw new CoreException(CoreErrorCode.HaarModelNotFound, cascadeFile);
         }
 
         _classifier = new CascadeClassifier(cascadeFile);
         if (_classifier.Empty())
         {
-            throw new InvalidOperationException($"无法加载人脸级联模型：{cascadeFile}");
+            throw new CoreException(CoreErrorCode.HaarModelLoadFailed, cascadeFile);
         }
 
         _minimumSize = new Size(minimumFaceSize, minimumFaceSize);

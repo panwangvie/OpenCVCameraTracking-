@@ -26,7 +26,7 @@ public sealed class YoloXOnnxDetector : IObjectDetector
     {
         if (!File.Exists(modelFile))
         {
-            throw new FileNotFoundException("YOLOX animal model was not found.", modelFile);
+            throw new CoreException(CoreErrorCode.YoloXModelNotFound, modelFile);
         }
 
         var allowed = new HashSet<string>(
@@ -42,10 +42,10 @@ public sealed class YoloXOnnxDetector : IObjectDetector
         _nmsThreshold = nmsThreshold;
 
         _network = CvDnn.ReadNetFromOnnx(modelFile)
-            ?? throw new InvalidOperationException($"Unable to load YOLOX model: {modelFile}");
+            ?? throw new CoreException(CoreErrorCode.YoloXModelLoadFailed, modelFile);
         if (_network.Empty())
         {
-            throw new InvalidOperationException($"Unable to load YOLOX model: {modelFile}");
+            throw new CoreException(CoreErrorCode.YoloXModelLoadFailed, modelFile);
         }
 
         _network.SetPreferableBackend(Backend.OPENCV);
@@ -74,7 +74,7 @@ public sealed class YoloXOnnxDetector : IObjectDetector
         var attributeCount = shape[^1];
         if (predictionCount != 8_400 || attributeCount < 85)
         {
-            throw new NotSupportedException($"Unexpected YOLOX output shape: [{string.Join(',', shape)}]");
+            throw new CoreException(CoreErrorCode.YoloXOutputShapeUnexpected, string.Join(',', shape));
         }
 
         var values = new float[checked((int)output.Total())];

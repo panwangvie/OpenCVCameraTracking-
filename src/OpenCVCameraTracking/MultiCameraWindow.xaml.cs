@@ -11,6 +11,7 @@ using OpenCVCameraTracking.Core;
 using OpenCVCameraTracking.Core.Camera;
 using OpenCVCameraTracking.Core.Detection;
 using OpenCVCameraTracking.Core.Logging;
+using OpenCVCameraTracking.Localization;
 
 namespace OpenCVCameraTracking;
 
@@ -55,7 +56,7 @@ public partial class MultiCameraWindow : Window
     {
         try
         {
-            tile.Status = "Connecting…";
+            tile.Status = LocalizationManager.Get("Status_Connecting");
             tile.Engine = new CameraTrackingEngine(new EmptyObjectDetector());
             tile.Engine.FrameReady += (_, args) =>
             {
@@ -69,17 +70,28 @@ public partial class MultiCameraWindow : Window
                 if (!_isClosing)
                 {
                     _ = Dispatcher.InvokeAsync(() =>
-                        tile.Status = args.Status == "Connected" ? $"{args.Width}×{args.Height}" : args.Status);
+                        tile.Status = args.Status == "Connected"
+                            ? $"{args.Width}×{args.Height}"
+                            : LocalizeSourceStatus(args.Status));
                 }
             };
             await tile.Engine.StartAsync(tile.Source.Options);
         }
         catch (Exception exception)
         {
-            tile.Status = exception.Message;
+            tile.Status = LocalizationManager.GetExceptionMessage(exception);
             AppLogger.Error($"Multi-camera tile failed: {tile.Source.Name}", exception);
         }
     }
+
+    private static string LocalizeSourceStatus(string status) => status switch
+    {
+        "Connecting" => LocalizationManager.Get("Status_Connecting"),
+        "Reconnecting" => LocalizationManager.Get("Status_Reconnecting"),
+        "Stopped" => LocalizationManager.Get("Status_Stopped"),
+        "FileEnded" => LocalizationManager.Get("Status_FileEnded"),
+        _ => status
+    };
 
     private async Task StopTilesAsync()
     {

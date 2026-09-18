@@ -1,6 +1,7 @@
 using System.IO;
 using System.Text.Json;
 using OpenCVCameraTracking.Core.Notifications;
+using OpenCVCameraTracking.Localization;
 
 namespace OpenCVCameraTracking.Configuration;
 
@@ -50,11 +51,28 @@ public static class SettingsStore
     public static void Save(ApplicationSettings settings)
     {
         Normalize(settings);
+        ApplyLocalizedDefaults(settings);
         var directory = Path.GetDirectoryName(SettingsPath)!;
         Directory.CreateDirectory(directory);
         var temporaryPath = SettingsPath + ".tmp";
         File.WriteAllText(temporaryPath, JsonSerializer.Serialize(settings, JsonOptions));
         File.Move(temporaryPath, SettingsPath, overwrite: true);
+    }
+
+    public static void ApplyLocalizedDefaults(ApplicationSettings settings)
+    {
+        if (settings.NotificationChannels is null)
+        {
+            return;
+        }
+
+        foreach (var channel in settings.NotificationChannels)
+        {
+            if (string.IsNullOrWhiteSpace(channel.Name))
+            {
+                channel.Name = LocalizationManager.Get(GetDefaultNotificationNameResourceKey(channel.Kind));
+            }
+        }
     }
 
     private static void Normalize(ApplicationSettings settings)
@@ -86,7 +104,7 @@ public static class SettingsStore
                     .Where(key => !string.IsNullOrWhiteSpace(key))
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToList();
-                channel.Name = string.IsNullOrWhiteSpace(channel.Name) ? GetDefaultNotificationName(channel.Kind) : channel.Name.Trim();
+                channel.Name = channel.Name?.Trim() ?? string.Empty;
                 channel.SmtpPort = channel.SmtpPort is < 1 or > 65535 ? 587 : channel.SmtpPort;
                 return channel;
             })
@@ -108,12 +126,12 @@ public static class SettingsStore
         }
     }
 
-    private static string GetDefaultNotificationName(NotificationChannelKind kind) => kind switch
+    private static string GetDefaultNotificationNameResourceKey(NotificationChannelKind kind) => kind switch
     {
-        NotificationChannelKind.ServerChan => "Server酱通知",
-        NotificationChannelKind.Feishu => "飞书通知",
-        NotificationChannelKind.Email => "邮件通知",
-        NotificationChannelKind.Telegram => "Telegram 通知",
-        _ => "消息通知"
+        NotificationChannelKind.ServerChan => "NotificationTypeServerChan",
+        NotificationChannelKind.Feishu => "NotificationTypeFeishu",
+        NotificationChannelKind.Email => "NotificationTypeEmail",
+        NotificationChannelKind.Telegram => "NotificationTypeTelegram",
+        _ => "NotificationDefaultName"
     };
 }

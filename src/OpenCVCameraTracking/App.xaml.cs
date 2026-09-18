@@ -19,6 +19,7 @@ public partial class App : Application
         Settings = SettingsStore.Load();
         AppLogger.Info($"Settings loaded: language={Settings.Language}, sourceKind={Settings.SelectedSourceKind}");
         LocalizationManager.Apply(Settings.Language);
+        SettingsStore.ApplyLocalizedDefaults(Settings);
         base.OnStartup(e);
         new MainWindow().Show();
     }
@@ -28,8 +29,10 @@ public partial class App : Application
         AppLogger.Error("Unhandled dispatcher exception", e.Exception);
         e.Handled = true;
         MessageBox.Show(
-            "程序遇到未处理的界面异常，详细信息已记录到本地日志。\n\n" + e.Exception.Message,
-            "OpenCVCameraTracking",
+            LocalizationManager.Format(
+                "UnhandledUiException",
+                LocalizationManager.GetExceptionMessage(e.Exception)),
+            LocalizationManager.Get("AppTitle"),
             MessageBoxButton.OK,
             MessageBoxImage.Error);
     }

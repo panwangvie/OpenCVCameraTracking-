@@ -21,7 +21,7 @@ public sealed record RestrictedZone(float X, float Y, float Width, float Height)
     {
         if (!IsValid || frameWidth <= 0 || frameHeight <= 0)
         {
-            throw new ArgumentOutOfRangeException(nameof(frameWidth), "The restricted zone or frame size is invalid.");
+            throw new CoreException(CoreErrorCode.RestrictedZoneInvalid);
         }
 
         var left = Math.Clamp((int)MathF.Round(X * frameWidth), 0, frameWidth - 1);

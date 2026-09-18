@@ -1,6 +1,6 @@
 namespace OpenCVCameraTracking.Core.Notifications;
 
-public sealed record NotificationEventDefinition(string Key, string DisplayNameResourceKey);
+public sealed record NotificationEventDefinition(string Key);
 
 public static class NotificationEventCatalog
 {
@@ -9,8 +9,8 @@ public static class NotificationEventCatalog
 
     public static IReadOnlyList<NotificationEventDefinition> Definitions { get; } =
     [
-        new(RestrictedZoneEntered, "NotificationEventRestrictedZone"),
-        new(UnknownTargetDetected, "NotificationEventUnknownTarget")
+        new(RestrictedZoneEntered),
+        new(UnknownTargetDetected)
     ];
 
     public static IReadOnlyList<string> DefaultKeys =>
@@ -73,10 +73,20 @@ public sealed class NotificationChannelSettings
 
 public sealed record NotificationMessage(string Title, string Body);
 
-public sealed record NotificationSendResult(bool Success, string Detail)
+public sealed record NotificationSendResult(
+    bool Success,
+    string? Detail,
+    NotificationResultCode Code = NotificationResultCode.None,
+    object[]? Arguments = null)
 {
     public static NotificationSendResult Succeeded(string detail) => new(true, detail);
     public static NotificationSendResult Failed(string detail) => new(false, detail);
+
+    public static NotificationSendResult Succeeded(NotificationResultCode code, params object[] arguments) =>
+        new(true, null, code, arguments);
+
+    public static NotificationSendResult Failed(NotificationResultCode code, params object[] arguments) =>
+        new(false, null, code, arguments);
 }
 
 public sealed record NotificationDeliveryResult(

@@ -45,7 +45,7 @@ public sealed class YoloOnnxDetector : IObjectDetector
     {
         if (!File.Exists(modelFile))
         {
-            throw new FileNotFoundException("找不到 ONNX 检测模型。", modelFile);
+            throw new CoreException(CoreErrorCode.YoloModelNotFound, modelFile);
         }
 
         _labels = (labels ?? CocoLabels).ToArray();
@@ -58,10 +58,10 @@ public sealed class YoloOnnxDetector : IObjectDetector
         _nmsThreshold = nmsThreshold;
 
         _network = CvDnn.ReadNetFromOnnx(modelFile)
-            ?? throw new InvalidOperationException($"无法加载 ONNX 模型：{modelFile}");
+            ?? throw new CoreException(CoreErrorCode.YoloModelLoadFailed, modelFile);
         if (_network.Empty())
         {
-            throw new InvalidOperationException($"无法加载 ONNX 模型：{modelFile}");
+            throw new CoreException(CoreErrorCode.YoloModelLoadFailed, modelFile);
         }
 
         _network.SetPreferableBackend(Backend.OPENCV);
@@ -93,7 +93,7 @@ public sealed class YoloOnnxDetector : IObjectDetector
     {
         if (output.Dims is < 2 or > 3)
         {
-            throw new NotSupportedException($"不支持的 YOLO 输出维度：{output.Dims}");
+            throw new CoreException(CoreErrorCode.YoloOutputDimensionsUnsupported, output.Dims);
         }
 
         var shape = Enumerable.Range(0, output.Dims).Select(output.Size).ToArray();
@@ -169,7 +169,7 @@ public sealed class YoloOnnxDetector : IObjectDetector
             var classCount = Math.Min(_labels.Length, attributeCount - classOffset);
             if (classCount <= 0)
             {
-                throw new NotSupportedException($"无法识别 YOLO 输出形状：[{string.Join(',', shape)}]");
+                throw new CoreException(CoreErrorCode.YoloOutputShapeUnsupported, string.Join(',', shape));
             }
 
             for (var prediction = 0; prediction < predictionCount; prediction++)

@@ -25,11 +25,11 @@ internal sealed class SFaceEmbeddingExtractor : IDisposable
     {
         if (!File.Exists(modelPath))
         {
-            throw new FileNotFoundException("SFace recognition model was not found.", modelPath);
+            throw new CoreException(CoreErrorCode.SFaceModelNotFound, modelPath);
         }
 
         _network = CvDnn.ReadNetFromOnnx(modelPath)
-            ?? throw new InvalidOperationException($"Unable to load SFace recognition model: {modelPath}");
+            ?? throw new CoreException(CoreErrorCode.SFaceModelLoadFailed, modelPath);
         _network.SetPreferableBackend(Backend.OPENCV);
         _network.SetPreferableTarget(Target.CPU);
     }
